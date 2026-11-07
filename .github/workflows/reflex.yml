@@ -1,0 +1,50 @@
+# The reflex. Wakes on a pull request, on any comment, and on a clock; merges what the
+# rules in dial.yml say merges, closes what has gone stale, then consolidates main.
+# Code runs from main, never from the pull request (only the PR's tests run, tokenless).
+name: reflex
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: pull request number, or "all"
+        default: all
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+concurrency:
+  group: main-writer
+  cancel-in-progress: false
+jobs:
+  reflex:
+    # a comment on an issue that is not a pull request wakes nothing
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: look
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request)  python3 tools/reflex.py pr "${{ github.event.pull_request.number }}" ;;
+            issue_comment) python3 tools/reflex.py pr "${{ github.event.issue.number }}" ;;
+            workflow_dispatch)
+              if [ "${{ github.event.inputs.pr }}" = "all" ]; then python3 tools/reflex.py all;
+              else python3 tools/reflex.py pr "${{ github.event.inputs.pr }}"; fi ;;
+            *)             python3 tools/reflex.py all ;;
+          esac

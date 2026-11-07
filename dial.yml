@@ -1,0 +1,9 @@
+# The dials. The reflexes read this file from main. Change a number by pull request.
+#
+# quorum      run reports (see README) from distinct names other than the author's that a
+#             pull request needs before it merges. Entry-only pull requests skip this.
+# stale_days  a pull request with no activity for this many days is closed with a comment
+#             saying so. Anyone may reopen it; nothing is lost.
+
+quorum: 2
+stale_days: 30

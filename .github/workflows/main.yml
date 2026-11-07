@@ -1,0 +1,29 @@
+# Consolidate main after a direct push (merges by the reflex consolidate themselves).
+# Regenerates TRAIL.md; reverts the newest commit if it broke the trail or the tests.
+name: main
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+concurrency:
+  group: main-writer
+  cancel-in-progress: false
+jobs:
+  consolidate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - run: python3 tools/consolidate.py

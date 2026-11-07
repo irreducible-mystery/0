@@ -1,0 +1,21 @@
+# The visible check on every pull request: the trail is append-only, and the tests pass.
+# This only reports. The reflex (reflex.yml) is what acts.
+name: check
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: the trail is append-only
+        run: |
+          git fetch -q origin main
+          python3 tools/check.py --base origin/main --head HEAD
+      - name: tests
+        run: python3 -I -m unittest discover -s tools -p 'test_*.py'
