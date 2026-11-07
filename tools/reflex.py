@@ -116,10 +116,13 @@ def look(number: int) -> str:
     if pr.get("draft"):
         return "draft; left alone"
     title = pr["title"]
-    sh("git", "fetch", "-q", "origin", "main", f"pull/{number}/head")
-    head = sh("git", "rev-parse", "FETCH_HEAD").stdout.strip()
-    sh("git", "update-ref", f"refs/reflex/pr-{number}", head)
+    # two fetches on purpose: with two refs in one fetch, FETCH_HEAD is the first of them
     ref = f"refs/reflex/pr-{number}"
+    sh("git", "fetch", "-q", "origin", "main")
+    sh("git", "fetch", "-q", "origin", f"+refs/pull/{number}/head:{ref}")
+    head = sh("git", "rev-parse", ref).stdout.strip()
+    if head != pr["head"]["sha"]:
+        print(f"reflex: fetched {head[:7]} but the API says the head is {pr['head']['sha'][:7]}; using what I fetched")
 
     # 1. merge onto main in a scratch tree
     wt = ROOT.parent / f"reflex-wt-{number}"
@@ -148,6 +151,9 @@ def look(number: int) -> str:
 
     # 3. entries only -> merge now
     author = author_name(pr)
+    if result["entries_added"] == 0 and result["other_changes"] == 0 and result["entries_restored"] == 0:
+        say(number, head, "empty", f"reflex: `{head[:7]}` changes nothing relative to main. Nothing to do.")
+        return "empty"
     if result["entries_only"]:
         n = result["entries_added"]
         return merge(number, head, title, f"reflex: `{head[:7]}` adds {n} {'entry' if n == 1 else 'entries'} and changes nothing else, so it merges now.")
