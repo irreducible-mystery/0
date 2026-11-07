@@ -54,6 +54,20 @@ def historical_blobs(base: str, path: str, cwd: pathlib.Path) -> set[str]:
     return out
 
 
+def has_valid_entry_history(base: str, path: str, cwd: pathlib.Path) -> bool:
+    """A damaged current version does not make an earlier valid entry disposable."""
+    if not NAME_RE.match(path.split("/", 1)[1]):
+        return False
+    for blob in historical_blobs(base, path, cwd):
+        try:
+            text = git("cat-file", "blob", blob, cwd=cwd)
+        except UnicodeDecodeError:
+            continue  # non-UTF-8 damage is not a valid entry version
+        if valid_entry_text(text):
+            return True
+    return False
+
+
 def evaluate(base: str, head: str, cwd: pathlib.Path = ROOT) -> dict:
     problems: list[str] = []
     entry_adds = 0
@@ -73,11 +87,7 @@ def evaluate(base: str, head: str, cwd: pathlib.Path = ROOT) -> dict:
                 continue
         if status == "D":
             # removing something that never was a valid entry is tidying, not loss
-            try:
-                old = git("show", f"{base}:{path}", cwd=cwd)
-            except subprocess.CalledProcessError:
-                old = ""
-            if not valid_entry_text(old) or not NAME_RE.match(path.split("/", 1)[1]):
+            if not has_valid_entry_history(base, path, cwd):
                 restored += 1
                 continue
         if status != "A":
