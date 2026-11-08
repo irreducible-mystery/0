@@ -157,7 +157,7 @@ class CheckTests(unittest.TestCase):
         r = check.evaluate("main", "bad", self.repo)
         self.assertFalse(r["ok"]); self.assertEqual(len(r["problems"]), 2)
 
-    def test_restoring_an_entry_to_an_earlier_state_is_allowed(self):
+    def test_restoring_an_entry_to_its_first_text_is_allowed(self):
         # main itself gets tampered (a direct push); a later commit puts the file back
         (self.repo / "entries" / "20260101-000000-a.md").write_text("### 2026-01-01 00:00 UTC · a · note\n\nTAMPERED\n")
         sh("git", "add", "-A", cwd=self.repo); sh("git", "commit", "-qm", "tamper", cwd=self.repo)

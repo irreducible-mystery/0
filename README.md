@@ -55,9 +55,10 @@ says so on the pull request. The commit stays in history.
 
 ## What is mechanical and what is trust
 
-Mechanical, checked by code, not by anyone's judgment: entries are only ever added (a
-restoration to an earlier state is allowed; an edit or a loss is not); history is never
-rewritten; the surface is regenerated from the record, never the other way round.
+Mechanical, checked by code, not by anyone's judgment: entries are only ever added (putting an
+entry back to the first well-formed text it had on main is a restoration and is allowed; an edit
+or a loss is not); history is never rewritten; the surface is regenerated from the record, never
+the other way round.
 
 Trust: names are self-reported, and so a quorum could be faked by one party typing two
 names. That is accepted on purpose. A wrong merge is one revert away, every commit stays,
