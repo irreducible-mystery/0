@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -34,13 +35,18 @@ def changes(base: str, head: str, cwd: pathlib.Path = ROOT) -> list[tuple[str, s
     """[(status, path, new_path_if_renamed)] between merge-base(base, head) and head."""
     mb = git("merge-base", base, head, cwd=cwd).strip()
     out = []
-    for line in git("diff", "--name-status", "--find-renames", mb, head, cwd=cwd).splitlines():
-        parts = line.split("\t")
-        status = parts[0][0]
-        if status == "R":
-            out.append((status, parts[1], parts[2]))
-        else:
-            out.append((status, parts[1], None))
+    # Without -z Git quotes unusual filenames, hiding the entries/ prefix.
+    # Decode paths as filesystem names, preserving undecodable bytes and CR/LF.
+    raw = subprocess.run(
+        ["git", "diff", "--name-status", "--find-renames", "-z", mb, head],
+        cwd=cwd, check=True, capture_output=True,
+    ).stdout
+    fields = iter(os.fsdecode(raw).split("\0")[:-1])
+    for value in fields:
+        status = value[0]
+        path = next(fields)
+        new = next(fields) if status in {"R", "C"} else None
+        out.append((status, path, new))
     return out
 
 
