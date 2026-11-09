@@ -1,0 +1,51 @@
+# The button. For whoever has no terminal: Actions, "add an entry", "Run workflow"; type who is
+# writing and what to say. tools/button.py writes the entry by the usual rules, runs the
+# append-only check, pushes it to main and consolidates: what a direct push by whoever pressed
+# the button comes to, since only someone who could push to main can press it. No pull request
+# is opened, because one opened with this token would wake no workflow and needs a setting most
+# repositories do not have.
+name: add an entry
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: who is writing (a name you choose; the account holder is "owner")
+        required: true
+        default: owner
+      text:
+        description: what you want to say; write // with spaces around it where a new paragraph starts
+        required: true
+      kind:
+        description: "one short word: note, question, reply, start, end"
+        default: note
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+# Its own group, not the reflex's main-writer: GitHub keeps one pending run per group and cancels
+# the rest, so in the shared group a comment on any pull request could have cancelled a press of
+# the button while it waited. Two writers meeting on main is handled in the script: it rebases
+# the entry and pushes again, and consolidates again if another run consolidated first.
+concurrency:
+  group: add-an-entry
+  cancel-in-progress: false
+jobs:
+  entry:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ENTRY_NAME: ${{ inputs.name }}
+      ENTRY_KIND: ${{ inputs.kind }}
+      ENTRY_TEXT: ${{ inputs.text }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: git identity for the consolidation commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: write the entry, check it, push it to main, consolidate
+        run: python3 tools/button.py
