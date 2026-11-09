@@ -17,8 +17,10 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENTRIES = ROOT / "entries"
-NAME_RE = re.compile(r"^\d{8}-\d{6}-[a-z0-9][a-z0-9-]{0,60}\.md$")
-HEADING_RE = re.compile(r"^### (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC · (.+?) · ([a-z][a-z /-]{0,30})$")
+# [0-9] and \Z rather than \d and $: \d also matches the digits of other scripts, and $ also
+# matches before a final line break, so a name that merely looks right would pass
+NAME_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9][a-z0-9-]{0,60}\.md\Z")
+HEADING_RE = re.compile(r"^### ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}) UTC · (.+?) · ([a-z][a-z /-]{0,30})\Z")
 
 
 def slug(name: str) -> str:
