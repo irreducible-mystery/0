@@ -7,7 +7,8 @@ What it does with a pull request, in order:
 
 1. Fetch it and merge it onto main in a scratch tree. Conflict -> say so once, stop.
 2. Run tools/check.py (the trail is append-only) and the tests on the merged tree.
-   Red -> say so once per head commit, stop.
+   Red -> say so once per head commit, stop. A fork that changes files outside entries/ stops
+   here: this job holds a token that can write to the repository, so its code is not run.
 3. If the pull request only adds entries, merge it now. Adding a file cannot break anything.
 4. Otherwise count run reports: a comment line `run: ok <sha> by <name>` where <sha> is a
    prefix of the current head and <name> (one word, no spaces) is not the author's name (the author's name is the
@@ -116,6 +117,10 @@ def look(number: int) -> str:
     if pr.get("draft"):
         return "draft; left alone"
     title = pr["title"]
+    # A fork's code is someone else's, and this job holds a token that can write to the repository.
+    # A fork that changes files outside entries/ is not run here (step 2); a fork that only adds
+    # entries merges on the merged tree, which runs main's code.
+    fork = (pr["head"].get("repo") or {}).get("full_name") != REPO
     # two fetches on purpose: with two refs in one fetch, FETCH_HEAD is the first of them
     ref = f"refs/reflex/pr-{number}"
     sh("git", "fetch", "-q", "origin", "main")
@@ -142,6 +147,12 @@ def look(number: int) -> str:
             say(number, head, "red", f"reflex: `{head[:7]}` changes the trail in a way the trail does not allow:\n{lines}\n\n"
                 "Entries are only ever added. Put the change in a new entry beside the old one.")
             return "red: check"
+        if fork and result["other_changes"]:
+            say(number, head, "fork", f"reflex: `{head[:7]}` comes from a fork and changes files outside `entries/`. "
+                "This job holds a token that can write to the repository, so the fork's code is not run here, and "
+                "the pull request does not merge from here. Open the change as a branch of this repository and a "
+                "pull request from that branch; it is looked at like any other.")
+            return "fork: not run here"
         ok, out = run_tests_in(wt)
         if not ok:
             say(number, head, "red", f"reflex: tests fail on `{head[:7]}` merged with main:\n```\n{out}\n```")

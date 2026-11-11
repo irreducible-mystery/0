@@ -8,14 +8,18 @@ The reflex's job holds a token that can write to the repository. No checkout may
 from __future__ import annotations
 
 import base64
+import contextlib
+import io
 import os
 import pathlib
+import subprocess
 import sys
 import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import consolidate  # noqa: E402
+import reflex  # noqa: E402
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows"
 
@@ -70,6 +74,67 @@ class WorkflowTests(unittest.TestCase):
         text = (WORKFLOWS / "reflex.yml").read_text(encoding="utf-8")
         self.assertIn('"OWNER","MEMBER","COLLABORATOR"', text)
         self.assertIn("github.event.comment.author_association", text)
+
+
+REPO_NAME = "irreducible-mystery/0"
+HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def pull(head_repo: str | None) -> dict:
+    """A pull request as the API returns it; head_repo is the full name of its head repository."""
+    repo = None if head_repo is None else {"full_name": head_repo}
+    return {"state": "open", "draft": False, "title": "a change", "body": "by: someone",
+            "user": {"login": "someone"}, "head": {"sha": HEAD_SHA, "repo": repo}}
+
+
+def checked(other: int = 0, entries_added: int = 0, entries_only: bool = False) -> dict:
+    """What check.evaluate returns for a merge with this many changes."""
+    return {"ok": True, "entries_added": entries_added, "entries_restored": 0, "other_changes": other,
+            "entries_only": entries_only, "problems": []}
+
+
+def fake_sh(*args, **kwargs):
+    """Stands in for the reflex's git calls: rev-parse gives the head; the rest do nothing."""
+    stdout = HEAD_SHA if args[:2] == ("git", "rev-parse") else ""
+    return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
+
+
+class ForkCodeTests(unittest.TestCase):
+    def look(self, pr: dict, result: dict):
+        tests = mock.MagicMock(return_value=(True, ""))
+        with mock.patch.object(reflex, "REPO", REPO_NAME), \
+                mock.patch.object(reflex, "gh_json", return_value=pr), \
+                mock.patch.object(reflex, "sh", side_effect=fake_sh), \
+                mock.patch.object(reflex.check, "evaluate", return_value=result), \
+                mock.patch.object(reflex, "run_tests_in", tests), \
+                mock.patch.object(reflex, "say") as say, \
+                mock.patch.object(reflex, "reports", return_value={}), \
+                mock.patch.object(reflex, "merge", return_value="merged") as merge, \
+                contextlib.redirect_stdout(io.StringIO()):
+            outcome = reflex.look(7)
+        return outcome, tests, say, merge
+
+    def test_a_fork_that_changes_code_is_not_run_here(self):
+        outcome, tests, say, merge = self.look(pull("someone/0"), checked(other=1))
+        self.assertEqual(outcome, "fork: not run here")
+        tests.assert_not_called()
+        merge.assert_not_called()
+        self.assertEqual(say.call_args.args[2], "fork")
+
+    def test_a_fork_that_only_adds_entries_is_run_and_merged(self):
+        outcome, tests, say, merge = self.look(pull("someone/0"), checked(entries_added=1, entries_only=True))
+        tests.assert_called_once()
+        self.assertEqual(outcome, "merged")
+
+    def test_a_fork_whose_repository_is_gone_counts_as_a_fork(self):
+        outcome, tests, say, merge = self.look(pull(None), checked(other=1))
+        self.assertEqual(outcome, "fork: not run here")
+        tests.assert_not_called()
+
+    def test_a_pull_request_from_this_repository_is_run_as_before(self):
+        outcome, tests, say, merge = self.look(pull(REPO_NAME), checked(other=1))
+        tests.assert_called_once()
+        self.assertTrue(outcome.startswith("waiting"), outcome)
 
 
 if __name__ == "__main__":
