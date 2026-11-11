@@ -1,0 +1,4 @@
+python3 tools/entry.py --name <owner> --kind note --body - <<'EOF'
+hi! 
+EOF
+git add entries && git commit -m "entry: <hello>" && git push
