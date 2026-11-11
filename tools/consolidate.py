@@ -10,6 +10,8 @@ cannot loop.
 """
 from __future__ import annotations
 
+import base64
+import os
 import pathlib
 import re
 import subprocess
@@ -26,9 +28,27 @@ def sh(*args: str, check_=True) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=ROOT, check=check_, capture_output=True, text=True)
 
 
+def push_env() -> dict[str, str]:
+    """The environment for the one push to main. The checkout keeps no credentials on disk
+    (persist-credentials: false), so the workflow's token is handed to this push, as git's
+    basic-auth header, through the environment. Without a token (a run on a laptop) the push
+    uses whatever git already has."""
+    env = dict(os.environ)
+    token = env.get("GH_TOKEN", "")
+    if token:
+        # appended after any git configuration the environment already carries (GIT_CONFIG_COUNT)
+        n = int(env.get("GIT_CONFIG_COUNT") or 0)
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env.update({"GIT_CONFIG_COUNT": str(n + 1),
+                    f"GIT_CONFIG_KEY_{n}": "http.https://github.com/.extraheader",
+                    f"GIT_CONFIG_VALUE_{n}": f"AUTHORIZATION: basic {basic}"})
+    return env
+
+
 def push_main() -> bool:
     for _ in range(2):
-        r = sh("git", "push", "origin", "HEAD:main", check_=False)
+        r = subprocess.run(["git", "push", "origin", "HEAD:main"], cwd=ROOT, env=push_env(),
+                           capture_output=True, text=True)
         if r.returncode == 0:
             return True
         print(f"consolidate: push rejected: {r.stderr.strip()[-300:]}")
