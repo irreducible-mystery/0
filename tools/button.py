@@ -31,9 +31,6 @@ import entry  # noqa: E402
 
 ROOT = entry.ROOT
 PARAGRAPH_BREAK = re.compile(r"(?:(?<=\s)|^)//(?=\s|$)")  # spaces on both sides, so a link's :// is left alone
-# git's words for "main has commits you do not have": the first three when the push arrives late,
-# the last two when main moves while the push is being received. Any other refusal is not retried.
-MAIN_MOVED = ("non-fast-forward", "fetch first", "stale info", "cannot lock ref", "failed to update ref")
 # what git strips from the ends of an author name (ident.c); a name made only of these is refused by git
 CRUD = " ,:;<>\"'\\"
 
@@ -124,7 +121,8 @@ def push_to_main(cwd: pathlib.Path = ROOT, attempts: int = 5) -> str:
     meantime, rebase the commit onto it and try again; a refusal for any other reason is reported
     as it came, once. Returns the new main's commit id."""
     for attempt in range(attempts):
-        if sh("git", "rev-parse", "HEAD", cwd=cwd).stdout == sh("git", "rev-parse", "origin/main", cwd=cwd).stdout:
+        base = sh("git", "rev-parse", "origin/main", cwd=cwd).stdout
+        if sh("git", "rev-parse", "HEAD", cwd=cwd).stdout == base:
             raise ValueError("this entry is already on main")
         result = check.evaluate("origin/main", "HEAD", cwd)
         if not result["ok"] or not result["entries_only"]:
@@ -132,14 +130,16 @@ def push_to_main(cwd: pathlib.Path = ROOT, attempts: int = 5) -> str:
         pushed = sh("git", "push", "-q", "origin", "HEAD:refs/heads/main", cwd=cwd, check=False)
         if pushed.returncode == 0:
             return sh("git", "rev-parse", "HEAD", cwd=cwd).stdout.strip()
-        if not any(word in (pushed.stderr or "") for word in MAIN_MOVED):
+        # whether main moved is asked of main itself, not read from git's words for it, which differ
+        # between versions ("non-fast-forward", "cannot lock ref", "incorrect old value provided", ...)
+        sh("git", "fetch", "-q", "origin", "main", cwd=cwd)
+        if sh("git", "rev-parse", "origin/main", cwd=cwd).stdout == base:
             raise ValueError("the push to main was refused, and not because of the entry. If the words below are about "
                              "a connection, press the button again; if about permissions or protection, main is closed "
                              "to the button. The words: " + refusal(pushed.stderr))
         if attempt == attempts - 1:
             raise ValueError(f"main kept moving under the button, {attempts} times over; press it again")
         print("button: main moved; rebasing onto it and trying again", flush=True)
-        sh("git", "fetch", "-q", "origin", "main", cwd=cwd)
         rebased = sh("git", "rebase", "-q", "origin/main", cwd=cwd, check=False)
         if rebased.returncode != 0:
             sh("git", "rebase", "--abort", cwd=cwd, check=False)
