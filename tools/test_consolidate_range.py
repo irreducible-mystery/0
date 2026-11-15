@@ -173,7 +173,7 @@ class RangeTests(unittest.TestCase):
         for name in ("consolidate.py", "check.py", "entry.py", "assemble.py"):
             shutil.copy(source / name, self.repo / "tools" / name)
         self.write(".gitignore", "__pycache__/\n")
-        (self.repo / "tools/test_stub.py").write_text("import unittest\n")
+        (self.repo / "tools/test_stub.py").write_text("import unittest\nclass Smoke(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n")
         self.commit("install the tools under test")
         base = self.rev("HEAD")
         temp = tempfile.TemporaryDirectory()
@@ -224,6 +224,16 @@ class RangeTests(unittest.TestCase):
         result = self.consolidate_landing(base, head)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.rev("origin/main^{tree}"), self.rev(base + "^{tree}"))
+
+    def test_a_good_landing_is_kept_and_the_trail_is_regenerated(self):
+        base = self.prepare_landing()
+        self.write("accepted.txt", "good landing\n")
+        self.commit("a good landing")
+        head = self.rev("HEAD")
+        result = self.consolidate_landing(base, head)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("good landing", self.git("show", "origin/main:accepted.txt").stdout)
+        self.assertIn("first", self.git("show", "origin/main:TRAIL.md").stdout)
 
     def test_before_without_after_cannot_broaden_a_manual_run(self):
         base = self.prepare_landing()
