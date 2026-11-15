@@ -455,10 +455,40 @@ check("C8", exact and abs(out - 0.7) < 1e-9 and top == 1.0 and back > 0.85,
 #    that survives 30 halvings of the interval around it.
 # =====================================================================================
 def sentence(rng, depth):
+    """A random sentence as a nested tuple: a leaf "s", "a", "0", "1", or (op, left, right)."""
     if depth == 0 or rng.unit() < 0.22:
-        return rng.pick(["s", "a", "a", "0.0", "1.0"])
-    op = rng.pick(["I", "I", "mn", "mx"])
-    return f"{op}({sentence(rng, depth - 1)},{sentence(rng, depth - 1)})"
+        return rng.pick(["s", "a", "a", "0", "1"])
+    op = rng.pick(["->", "->", "min", "max"])
+    left = sentence(rng, depth - 1)
+    return (op, left, sentence(rng, depth - 1))
+
+
+def leaves(t):
+    return {t} if isinstance(t, str) else leaves(t[1]) | leaves(t[2])
+
+
+def show(t):
+    if isinstance(t, str):
+        return t
+    op, x, y = t
+    return f"({show(x)} -> {show(y)})" if op == "->" else f"{op}({show(x)}, {show(y)})"
+
+
+def as_function(t, cond):
+    """The sentence as a function of (s, a), built from closures; no code is made from text."""
+    if t == "s":
+        return lambda s, a: s
+    if t == "a":
+        return lambda s, a: a
+    if t in ("0", "1"):
+        return (lambda v: lambda s, a: v)(float(t))
+    op, x, y = t
+    fx, fy = as_function(x, cond), as_function(y, cond)
+    if op == "->":
+        return lambda s, a: cond(fx(s, a), fy(s, a))
+    if op == "min":
+        return lambda s, a: min(fx(s, a), fy(s, a))
+    return lambda s, a: max(fx(s, a), fy(s, a))
 
 
 def least(f, a, n=200):
@@ -502,17 +532,16 @@ section("D. Random sentences from ->, min, max: does the least solution jump?")
 rng = Draw("where the jump goes")
 SENTENCES = []
 while len(SENTENCES) < 200:
-    src = sentence(rng, 3)
-    if "s" in src and "a" in src and src not in SENTENCES:
-        SENTENCES.append(src)
+    t = sentence(rng, 3)
+    if {"s", "a"} <= leaves(t) and t not in SENTENCES:
+        SENTENCES.append(t)
 counts, example = {}, {}
 for name, cond in (("half-slope", c_half), ("averaging", c_avg), ("Lukasiewicz", c_luk)):
-    env = {"I": cond, "mn": min, "mx": max}
-    hits = [src for src in SENTENCES if worst_gap(eval("lambda s, a: " + src, env)) > 0.04]
-    counts[name], example[name] = len(hits), (hits[0] if hits else None)
+    hits = [t for t in SENTENCES if worst_gap(as_function(t, cond)) > 0.04]
+    counts[name], example[name] = len(hits), (show(hits[0]) if hits else None)
 check("D1", counts["half-slope"] == 0, f"half-slope ->: {counts['half-slope']} of {len(SENTENCES)} sentences jump")
 check("D2", counts["averaging"] == 0, f"averaging ->: {counts['averaging']} of {len(SENTENCES)} sentences jump")
-say(f"for example S <-> {example['Lukasiewicz']}   (I is ->, mn is min, mx is max)")
+say(f"for example S <-> {example['Lukasiewicz']}")
 check("D3", counts["Lukasiewicz"] > 0, f"control, Lukasiewicz ->: {counts['Lukasiewicz']} of the same {len(SENTENCES)} sentences jump")
 
 # =====================================================================================

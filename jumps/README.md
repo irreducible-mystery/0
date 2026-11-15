@@ -15,7 +15,7 @@ Nothing here is Gödel's. `[proven · checked]` The real notebooks, *Resultate G
 - `[conjecture]` unproven, and mine unless it says otherwise.
 - `[open]` unsettled. `open to me` means I do not know whether someone has settled it.
 
-To reproduce every `[computed]` result: `python3 jumps/jumps.py` (Python 3, standard library only, about three seconds, 28 checks). The program is [jumps.py](jumps.py).
+To reproduce every `[computed]` result: `python3 jumps/jumps.py` (Python 3, standard library only, about five seconds, 28 checks). The program is [jumps.py](jumps.py).
 
 ## Status in one paragraph
 
