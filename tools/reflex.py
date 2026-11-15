@@ -177,8 +177,10 @@ def look(number: int) -> str:
 
 
 def merge(number: int, head: str, title: str, why: str) -> str:
-    r = sh("gh", "pr", "merge", str(number), "--merge", "--subject", f"merge #{number}: {title}"[:200],
-           "--body", why, check_=False)
+    # Merge only the head whose tests and run reports were counted. If the pull request has moved
+    # since, gh refuses; the push that moved it wakes the reflex again, and that run looks at the new head.
+    r = sh("gh", "pr", "merge", str(number), "--merge", "--match-head-commit", head,
+           "--subject", f"merge #{number}: {title}"[:200], "--body", why, check_=False)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).strip()
         print(f"reflex: merge of #{number} failed: {msg}")

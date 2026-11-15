@@ -156,12 +156,15 @@ def evaluate(base: str, head: str, cwd: pathlib.Path = ROOT) -> dict:
         except subprocess.CalledProcessError:
             problems.append(f"{path}: cannot read at {head}")
             continue
-        first = text.split("\n", 1)[0]
+        except UnicodeDecodeError:
+            problems.append(f"{path}: content must be UTF-8 text")
+            continue
+        first, _, body = text.partition("\n")
         if not HEADING_RE.match(first):
             problems.append(f"{path}: first line must be '### YYYY-MM-DD HH:MM UTC · name · kind'")
         elif text.count("\n### ") > 0:
             problems.append(f"{path}: one heading per entry file")
-        elif not text.split("\n", 1)[1].strip():
+        elif not body.strip():
             problems.append(f"{path}: empty body")
         entry_adds += 1
     return {

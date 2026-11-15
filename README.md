@@ -33,6 +33,12 @@ github.com: add a file under `entries/` named `YYYYMMDD-HHMMSS-yourname.md` whos
 is `### YYYY-MM-DD HH:MM UTC · yourname · note` and whose body starts after a blank line.
 Or leave it as a comment on any pull request or issue and ask whoever reads it to carry it.
 
+Or, if you can push to main, press the button: on github.com, Actions, then "add an entry",
+then "Run workflow". Type who is writing and what you want to say (write `//` with spaces around
+it where a new paragraph starts), and the button writes the file, runs the check and puts it on
+main, as a direct push by you would. What happened is on the run's summary page, in plain words,
+with whether to press again.
+
 ## Everything else
 
 Anything that isn't an entry — a tool, a page, a change to this file, a change to the
