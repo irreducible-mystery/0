@@ -84,7 +84,7 @@ Three consequences, all `[derived]`:
 
 ### 5.1 Coins: a smooth curve
 
-Objects are coins and the budget is a number of flips. The best test's edge between two coins after n flips is the total variation distance between two binomial distributions. `[proven · recall]` The edge of the best test is the total variation distance, and the head count loses nothing.
+Objects are coins and the budget is a number of flips. The best test's edge between two coins after n flips is the total variation distance between two binomial distributions, because no test can show a larger gap than total variation and the head count loses nothing. `[proven · recall]`
 
 ```
 flips               10      100    1,000   10,000  100,000  1,000,000
@@ -99,7 +99,7 @@ flips               10      100    1,000   10,000  100,000  1,000,000
 
 Two random sources of 6-bit strings, one uniform over strings with an even number of 1s and one over strings with an odd number. The budget is how many bits a test may read. The edge is 0 for every test that reads fewer than 6 bits and 1 at 6. `[computed B1]` After someone computes the parity, which costs 6 reads, a test that reads one bit separates the two completely. `[computed B2]` So at budget 1 the distance is 0 before the computation and 1 after it. Law 3 holds with its budget shift and fails without it. `[computed B3]`
 
-In Fourier terms, the difference between the two sources has all its weight on the single pattern that involves every bit. `[computed B4]` In general a pattern's weight splits across levels, where level k is the part that only tests combining k bits can see, and the levels add up to the whole. `[proven · recall]` This is Parseval's identity, checked exactly on a random function of 6 bits. `[computed B5]`
+In Fourier terms, the difference between the two sources has all its weight on the single pattern that involves every bit. `[computed B4]` In general a pattern's weight splits across levels, where level k is the part invisible to every test that reads fewer than k bits, and the levels add up to the whole. `[proven · recall]` This is Parseval's identity, checked exactly on a random function of 6 bits. `[computed B5]`
 
 ### 5.3 Two observers
 
@@ -124,7 +124,7 @@ The puzzle is old. Hintikka called it the scandal of deduction. D'Agostino and F
 ## 7. Prior knowledge: who already has what
 
 - **Law 2 as a logic.** Quantitative algebra writes every equation with an error bound, so that its equations define a distance (Mardare, Panangaden and Plotkin 2016; the 2026 journal version by Bacci and the same three is called quantitative equational logic). `[proven · checked]` Its rules include the triangle inequality. `[proven · recall]`
-- **Laws 1 to 3 inside cryptography.** Computational indistinguishability is distance 0 for efficient tests. Law 2 is the hybrid argument and law 3 is a reduction. `[proven · recall]` Computational Indistinguishability Logic (Barthe, Daubignard, Kapron and Lakhnech 2010) is a formal logic of this kind, in which the error allowed in a claim depends on the adversary's resources. `[proven · checked]`
+- **Laws 1 to 3 inside cryptography.** Computational indistinguishability is a distance too small to matter for every efficient test. Law 2 is the hybrid argument and law 3 is a reduction. `[proven · recall]` Computational Indistinguishability Logic (Barthe, Daubignard, Kapron and Lakhnech 2010) is a formal logic of this kind, in which the error allowed in a claim depends on the adversary's resources. `[proven · checked]`
 - **The same in programming-language theory.** Cappai and Dal Lago (2015) study metrics for a calculus of probabilistic polynomial-time programs. Dal Lago, Galal and Giusti (2024) give a calculus in which polynomial time is the ceiling for every program and a metric measures how nearly two programs agree. `[proven · checked]`
 - **A cousin of law 3.** Dagnino and Pasquali (2021) give a logic of quantitative equality whose substitution rule charges for resources. What it prices is error amplification, a Lipschitz constant, not an observer's budget. `[proven · checked]` I read about two thirds of that paper.
 - **Cryptography as category theory.** Categorical composable cryptography treats security up to a distance given by a distinguisher's advantage. `[proven · checked]` from excerpts only.
