@@ -19,6 +19,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import consolidate  # noqa: E402
+import button  # noqa: E402
 import reflex  # noqa: E402
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows"
@@ -36,6 +37,22 @@ def header_of(env: dict[str, str]) -> str | None:
 
 
 class PushTests(unittest.TestCase):
+    def test_button_supplies_credentials_only_to_the_push(self):
+        def git_call(*args, **kwargs):
+            value = "base" if args == ("git", "rev-parse", "origin/main") else "head"
+            return subprocess.CompletedProcess(args, 0, value, "")
+
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "token-for-test"}), \
+                mock.patch.object(button, "sh", side_effect=git_call) as sh, \
+                mock.patch.object(button.check, "evaluate", return_value={"ok": True, "entries_only": True}):
+            self.assertEqual(button.push_to_main(), "head")
+        pushes = [call for call in sh.call_args_list if call.args[:2] == ("git", "push")]
+        self.assertEqual(len(pushes), 1)
+        self.assertIsNotNone(header_of(pushes[0].kwargs["env"]))
+        for call in sh.call_args_list:
+            if call.args[:2] != ("git", "push"):
+                self.assertNotIn("env", call.kwargs)
+
     def test_the_token_reaches_the_push_as_a_header(self):
         with mock.patch.dict(os.environ, {"GH_TOKEN": "token-for-test"}):
             value = header_of(consolidate.push_env())
