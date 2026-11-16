@@ -117,9 +117,13 @@ def spearman(a: list[float], b: list[float]) -> float | None:
 
 
 def rho0(a: list[float], b: list[float]) -> float:
-    """Spearman, with 'ranks nothing' counted as agreeing with nothing."""
+    """Spearman as agreement between two answers. An answer that ranks nothing (all tied, or
+    a refusal) agrees fully with another that ranks nothing, and not at all with a ranking."""
     r = spearman(a, b)
-    return 0.0 if r is None else r
+    if r is not None:
+        return r
+    flat = lambda v: max(v) - min(v) < 1e-9
+    return 1.0 if flat(a) and flat(b) else 0.0
 
 
 def mean(xs) -> float:
@@ -629,7 +633,8 @@ def score_sheet(rows: list[dict]) -> dict:
             continue
         cells[(row["model"], row["lens"], str(row["rep"]))] = parse_ranking(row["ranking"])
     ranked = {k: v for k, v in cells.items() if v is not None}
-    g = grid_stats(ranked)
+    # A refusal is an answer: it agrees with another refusal and with no ranking.
+    g = grid_stats({k: ([0.0] * len(CANDIDATES) if v is None else v) for k, v in cells.items()})
     out = {"runs": len(cells), "refused": sum(v is None for v in cells.values()), "shapes": {k: shape(v) for k, v in cells.items()}, **g}
     f, w = g["floor"], g["within"]
     outs = {lens: v for lens, v in g["out"].items() if v is not None}
@@ -715,7 +720,11 @@ def section_d() -> None:
         parse_ranking("200>100>400")
     except ValueError:
         bad = True
-    check("D3", got == cases and bad, "shapes: rising, falling, peak (ties allowed), flat, other and refused are each read correctly; a ranking with a dose missing is rejected")
+    sheet = [{"model": m, "lens": f, "rep": r, "ranking": "REFUSE" if f == "ill-posed" else "200>100>400>50>0>800"}
+             for m in ("m1", "m2") for f in ("ill-posed", "non-monotone", "mechanistic") for r in (1, 2)]
+    ref = score_sheet(sheet)
+    refusal = ref["refused"] == 4 and ref["own"]["ill-posed"] == 1.0 and ref["out"]["ill-posed"] == 0.0 and ref["odd"] == "ill-posed"
+    check("D3", got == cases and bad and refusal, "shapes: rising, falling, peak (ties allowed), flat, other and refused are each read correctly; a ranking with a dose missing is rejected; a refusal agrees with a refusal and with no ranking")
 
     def fill(world: str, seed: str, placebo: bool = False) -> list[dict]:
         rng = Rng(seed)
