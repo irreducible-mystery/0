@@ -156,6 +156,7 @@ The first run of the program failed six of its twenty-five checks. Each failure 
 4. I expected the skeptic to refuse on a flat world nine times in ten. It depends on how much of a reader's noise is its own slant (4.8).
 5. I expected shared drift to push accuracy below 0.2. It was 0.27. The check now asserts the gap, not my guess at the level.
 6. I expected the hidden-lens test to work for all three lenses. For the non-monotone lens it barely does (4.10).
+7. Found later, by the page built from the program, and this one was a bug: two cells that both declined to rank were scored as disagreeing with each other. A refusal now agrees with a refusal and with no ranking. No printed number changed.
 
 ## Sources
 
