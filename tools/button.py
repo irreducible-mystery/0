@@ -41,8 +41,8 @@ def paragraphs(text: str) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
-def sh(*args: str, cwd: pathlib.Path = ROOT, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=cwd, check=check, capture_output=True, encoding="utf-8")
+def sh(*args: str, cwd: pathlib.Path = ROOT, check: bool = True, env=None) -> subprocess.CompletedProcess:
+    return subprocess.run(args, cwd=cwd, check=check, capture_output=True, encoding="utf-8", env=env)
 
 
 def summary(text: str) -> None:
@@ -120,6 +120,8 @@ def push_to_main(cwd: pathlib.Path = ROOT, attempts: int = 5) -> str:
     """Check the one new commit as consolidate would, then push it to main. If main moved in the
     meantime, rebase the commit onto it and try again; a refusal for any other reason is reported
     as it came, once. Returns the new main's commit id."""
+    import consolidate
+
     for attempt in range(attempts):
         base = sh("git", "rev-parse", "origin/main", cwd=cwd).stdout
         if sh("git", "rev-parse", "HEAD", cwd=cwd).stdout == base:
@@ -127,7 +129,8 @@ def push_to_main(cwd: pathlib.Path = ROOT, attempts: int = 5) -> str:
         result = check.evaluate("origin/main", "HEAD", cwd)
         if not result["ok"] or not result["entries_only"]:
             raise ValueError("the check refused it: " + "; ".join(result["problems"] or ["not an entries-only change"]))
-        pushed = sh("git", "push", "-q", "origin", "HEAD:refs/heads/main", cwd=cwd, check=False)
+        pushed = sh("git", "push", "-q", "origin", "HEAD:refs/heads/main", cwd=cwd, check=False,
+                    env=consolidate.push_env())
         if pushed.returncode == 0:
             return sh("git", "rev-parse", "HEAD", cwd=cwd).stdout.strip()
         # whether main moved is asked of main itself, not read from git's words for it, which differ

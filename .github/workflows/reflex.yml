@@ -1,6 +1,8 @@
-# The reflex. Wakes on a pull request, on any comment, and on a clock; merges what the
-# rules in dial.yml say merges, closes what has gone stale, then consolidates main.
-# Code runs from main, never from the pull request (only the PR's tests run, tokenless).
+# The reflex. Wakes on a pull request, on a comment by someone who can write to the repository,
+# and on a clock; merges what the rules in dial.yml say merges, closes what has gone stale, then
+# consolidates main. A fork's code is not run in this job (tools/reflex.py). The tests of this
+# repository's own pull requests are, and they can see the job's environment, so only people who
+# can write to the repository may open one. The checkout keeps no credentials on disk.
 name: reflex
 on:
   pull_request:
@@ -23,8 +25,12 @@ concurrency:
   cancel-in-progress: false
 jobs:
   reflex:
-    # a comment on an issue that is not a pull request wakes nothing
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    # a comment on an issue that is not a pull request wakes nothing, and neither does a comment by
+    # someone who cannot write to the repository (the schedule still looks at every open pull request)
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -34,6 +40,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false
       - name: git identity
         run: |
           git config user.name "github-actions[bot]"
