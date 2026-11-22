@@ -16,10 +16,14 @@ Usage:
     python3 edge/edge.py -v         # also print the tables some sections keep
 
 Standard library only. No network, no files written. Exit status 0 if every check
-passes, 1 otherwise. Randomness comes only from random.Random(seed).random(), the one
-sequence Python promises to keep, so the simulated numbers are the same everywhere;
-floating-point results can differ in the last digits between machines, and the
-tolerances allow for that.
+passes, 1 if one fails, 2 if the arguments are not understood. Randomness comes only
+from random.Random(seed).random(), the one sequence Python promises to keep, so the
+simulated numbers are the same everywhere; floating-point results can differ in the
+last digits between machines and Python versions, and the tolerances allow for that.
+
+Literal numbers in the pass conditions are of two kinds, and comments say which:
+values from outside (a table, a theorem), and regression values produced by an
+earlier run of this program, which only guard against the code changing.
 """
 from __future__ import annotations
 
@@ -37,9 +41,15 @@ RESULTS: list[tuple[bool, str, str]] = []
 
 
 def check(name: str, ok: bool, detail: str) -> None:
-    """Record one check and print it. `detail` carries the numbers that were computed."""
+    """Record one check and print it. `detail` carries the numbers that were computed. It is
+    written as the statement that should hold, so a failing line is flagged as not confirmed."""
     RESULTS.append((bool(ok), name, detail))
-    print(("ok   " if ok else "FAIL ") + name + "  " + detail)
+    print(("ok   " if ok else "FAIL ") + name + "  " + ("" if ok else "NOT CONFIRMED, this did not hold as written: ") + detail)
+
+
+def tiny(v: float) -> str:
+    """A small error, for printing. Values at rounding level are shown as a bound, not as a figure."""
+    return f"{v:.0e}" if v >= 1e-15 else "under 1e-15"
 
 
 def say(text: str = "") -> None:
@@ -224,6 +234,17 @@ def poly_eval(coeffs: list[complex], x: complex) -> complex:
     return acc
 
 
+def poly_residual(coeffs: list[complex], roots: list[complex]) -> float:
+    """Largest |p(r)| over the given values r, relative to the size of p's terms there.
+    Durand-Kerner returns whatever it has when it stops, so this is how a caller knows
+    that what came back are roots."""
+    worst = 0.0
+    for r in roots:
+        scale = sum(abs(c) * abs(r) ** k for k, c in enumerate(coeffs))
+        worst = max(worst, abs(poly_eval(coeffs, r)) / scale)
+    return worst
+
+
 def poly_roots(coeffs: list[complex], max_iter: int = 2000, tol: float = 1e-13) -> list[complex]:
     """All roots of c[0] + c[1] x + ... + c[n] x^n by the Durand-Kerner iteration.
     Reliable for simple roots up to degree ~40; multiple roots converge slowly."""
@@ -267,13 +288,16 @@ def density_kuiper_pdf(y: float, k_max: int = 60) -> float:
     return 4 * sum((2 * PI ** 2 * k ** 4 * y ** 3 - 3 * PI * k * k * y) * math.exp(-PI * k * k * y * y) for k in range(1, k_max + 1))
 
 
-def density_moment(s: complex, h: float = 0.002) -> complex:
-    """E[Y^s] by the trapezoid rule in u = log y: the integral of pdf(e^u) e^(u(s+1)) du.
-    For u < 0 the density is taken from the even function phi, which the series loses digits on."""
+def density_moment(s: complex, h: float = 0.001) -> complex:
+    """E[Y^s], integrating the Kuiper density itself: the trapezoid rule on 0.25 <= y <= 5.
+    Outside that range the density is below 1e-13 (it is 2 Phi(u) e^(-3u/2) at y = e^u, and
+    Phi(1.3) is 6e-15), and the series for it is accurate to rounding inside."""
     total = 0j
-    for j in range(-int(8 / h), int(1.6 / h) + 1):
-        u = j * h
-        total += 2 * phi(u) * cmath.exp(u * (s - 0.5))  # pdf(e^u) e^(3u/2) = 2 phi(u), checked in A4
+    n0, n1 = int(round(0.25 / h)), int(round(5.0 / h))
+    for j in range(n0, n1 + 1):
+        y = j * h
+        weight = 0.5 if j in (n0, n1) else 1.0
+        total += weight * density_kuiper_pdf(y, 30) * cmath.exp(s * math.log(y))
     return total * h
 
 
@@ -290,11 +314,15 @@ def section_density() -> None:
     grid = [i * 0.05 for i in range(25)]
     uneven = max(abs(phi_series(u) - phi_series(-u)) for u in grid)
     lowest = min(phi(i * 0.01) for i in range(131))
+    scan = [(g_bump(-2 + 0.001 * i), -2 + 0.001 * i) for i in range(3001)]
+    trough, trough_at = min(scan)
+    peak, peak_at = max(scan)
     check(
         "A1",
-        uneven < 1e-12 and lowest > 0 and abs(g_bump(0.3) - g_bump(-0.3)) > 0.05,
-        f"Phi is even (largest |Phi(u) - Phi(-u)| on [0, 1.2] is {uneven:.0e}) and positive (least value on [0, 1.3] is {lowest:.1e}); "
-        f"a single bump is neither: g(0.3) = {g_bump(0.3):.4f}, g(-0.3) = {g_bump(-0.3):.4f}",
+        uneven < 1e-12 and lowest > 0 and abs(g_bump(0.3) - g_bump(-0.3)) > 0.05 and trough < -0.3,
+        f"Phi is even (largest |Phi(u) - Phi(-u)| on [0, 1.2] is {uneven:.0e}, from the series as written, which is not even term by term) "
+        f"and positive (least value on [0, 1.3] is {lowest:.1e}); a single term g is neither: g(0.3) = {g_bump(0.3):.4f} but g(-0.3) = {g_bump(-0.3):.4f}, "
+        f"and beside its peak of {peak:.3f} at v = {peak_at:.2f} it has a trough of {trough:.3f} at v = {trough_at:.2f}",
     )
 
     worst = 0.0
@@ -329,15 +357,20 @@ def section_density() -> None:
 
     ident = max(abs(density_kuiper_pdf(math.exp(u)) * math.exp(1.5 * u) - 2 * phi(u)) for u in [-0.5 + 0.05 * i for i in range(37)])
     off = abs(density_kuiper_pdf(math.exp(0.2)) * math.exp(1.4 * 0.2) - 2 * phi(0.2))  # control: the wrong tilt
+    mass = density_moment(0j).real
+    mean_v = density_moment(1 + 0j).real * math.sqrt(PI / 2)  # the mean of Kuiper's variable itself: sqrt(pi/2), a known value
     gaps = []
     for s in (2 + 0j, 3 + 2j, 0.5 + 10j, 0.25 + 3j):
         want = 2 * xi(s)
         gaps.append(abs(density_moment(s) - want) / abs(want))
+    wrong_scale = abs(density_moment(2 + 0j) * (PI / 2) ** 2 - 2 * xi(2)) / abs(2 * xi(2))  # control: Y = sqrt(pi/2) V instead of sqrt(2/pi) V
     check(
         "A4",
-        ident < 1e-12 and off > 1e-3 and max(gaps) < 1e-7,
-        f"let Y be sqrt(2/pi) times a variable with Kuiper's limit law (the height of a Brownian excursion). The density of log Y, tilted by sqrt(Y), is 2 Phi "
-        f"(largest gap {ident:.0e}; with the wrong tilt {off:.1e}), and E[Y^s] = 2 xi(s) at four complex s (relative gap at most {max(gaps):.0e})",
+        ident < 1e-12 and off > 1e-3 and max(gaps) < 1e-9 and abs(mass - 1) < 1e-10 and abs(mean_v - math.sqrt(PI / 2)) < 1e-10 and wrong_scale > 0.5,
+        f"let V have Kuiper's limit law (the range of a Brownian bridge, the height of a Brownian excursion) and Y = sqrt(2/pi) V. Integrating Kuiper's density itself: "
+        f"total mass {mass:.12f}, mean of V {mean_v:.10f} against sqrt(pi/2) = {math.sqrt(PI / 2):.10f}, and E[Y^s] = 2 xi(s) at s = 2, 3 + 2i, 1/2 + 10i, 1/4 + 3i "
+        f"(relative gap at most {max(gaps):.0e}; with the constant sqrt(pi/2) in place of sqrt(2/pi) the second moment is off by {wrong_scale:.1f} of itself). "
+        f"Point by point, the density of log Y tilted by sqrt(Y) is 2 Phi (largest gap for -0.5 <= log Y <= 1.3: {ident:.0e}; with the wrong tilt {off:.1e})",
     )
 
     rng = Rng(20261122)
@@ -345,15 +378,18 @@ def section_density() -> None:
     rows = []
     ok = True
     for t in (0.0, 10.0, zeros[0] if zeros else 14.134725):
-        got = sum(math.sqrt(y) * math.cos(t * math.log(y)) for y in ys) / len(ys)
+        vals = [math.sqrt(y) * math.cos(t * math.log(y)) for y in ys]
+        got = sum(vals) / len(vals)
+        err = math.sqrt(sum((v - got) ** 2 for v in vals) / (len(vals) - 1) / len(vals))
         want = 2 * xi_from_phi(t)
-        rows.append(f"t = {t:.4f}: {got:+.3f} against {want:+.3f}")
-        ok = ok and abs(got - want) < 0.03
+        rows.append(f"t = {t:.4f}: {got:+.4f} against {want:+.4f} (sampling error {err:.4f})")
+        ok = ok and abs(got - want) < 3 * err
     check(
         "A5",
         ok,
-        "simulated: Kuiper's statistic on 200 uniform points, 4000 times; the mean of sqrt(Y) cos(t log Y) against twice the transform of Phi. "
-        + "; ".join(rows) + " (sampling error about 0.01)",
+        "simulated: Kuiper's statistic on 200 uniform points, 4000 times; the mean of sqrt(Y) cos(t log Y) against twice the transform of Phi, "
+        "each within three sampling errors. " + "; ".join(rows) + ". This places the first zero to about half a unit of height and no higher one: "
+        "the transform falls off too fast for sampling to follow",
     )
 
 
@@ -377,8 +413,22 @@ def coins_partition_poly(n: int, coupling) -> list[float]:
     return coeffs
 
 
-def coins_off_circle(coeffs: list[float]) -> float:
-    return max(abs(abs(z) - 1) for z in poly_roots(coeffs))
+def coins_off_circle(coeffs: list[float]) -> tuple[float, float]:
+    """(how far the furthest zero is from the unit circle, the residual showing the values found are zeros)"""
+    roots = poly_roots(coeffs)
+    return max(abs(abs(z) - 1) for z in roots), poly_residual(coeffs, roots)
+
+
+def coins_weighted(coeffs: list[float], eps: float) -> list[float]:
+    """Weight the magnetisation M by e^(-eps M^2). Coefficient k belongs to k spins down, M = n - 2k."""
+    n = len(coeffs) - 1
+    return [c * math.exp(-eps * (n - 2 * k) ** 2) for k, c in enumerate(coeffs)]
+
+
+def coins_not_proportional(a: list[float], b: list[float]) -> float:
+    """0 when the two coefficient lists are the same polynomial up to a constant factor."""
+    ratios = [x / y for x, y in zip(a, b)]
+    return max(ratios) / min(ratios) - 1
 
 
 def section_coins() -> None:
@@ -401,34 +451,48 @@ def section_coins() -> None:
     check("B1", ok, "two coins, heads minus tails, agreement weighted by e^(4 eps); zeros of the transform 2 + 2 e^(4 eps) cos 2t. " + "; ".join(rows))
 
     rng = Rng(1952)
-    worst_ferro, best_anti = 0.0, float("inf")
+    worst_ferro, best_anti, worst_residual = 0.0, float("inf"), 0.0
     for _ in range(5):
         table = {}
         for i in range(8):
             for j in range(i + 1, 8):
                 table[(i, j)] = 0.5 * rng.uniform()
-        worst_ferro = max(worst_ferro, coins_off_circle(coins_partition_poly(8, lambda i, j: table[(i, j)])))
-        best_anti = min(best_anti, coins_off_circle(coins_partition_poly(8, lambda i, j: -0.3 * table[(i, j)])))
+        off, res = coins_off_circle(coins_partition_poly(8, lambda i, j: table[(i, j)]))
+        worst_ferro, worst_residual = max(worst_ferro, off), max(worst_residual, res)
+        off, res = coins_off_circle(coins_partition_poly(8, lambda i, j: -0.3 * table[(i, j)]))
+        best_anti, worst_residual = min(best_anti, off), max(worst_residual, res)
     check(
         "B2",
-        worst_ferro < 1e-8 and best_anti > 0.05,
+        worst_ferro < 1e-8 and best_anti > 0.05 and worst_residual < 1e-9,
         f"Lee and Yang's theorem on five random magnets of 8 spins: with every coupling attractive, every zero in z = e^(-2h) is on the unit circle "
-        f"(furthest from it: {max(worst_ferro, 1e-16):.0e}), which means a purely imaginary field; with the couplings made repulsive at three tenths the strength, "
-        f"zeros leave the circle (in each magnet some zero is at least {best_anti:.2f} from it)",
+        f"(furthest from it: {tiny(worst_ferro)}), which means a purely imaginary field; with the couplings made repulsive at three tenths the strength, "
+        f"zeros leave the circle (in each magnet some zero is at least {best_anti:.2f} from it). All eighty values found are zeros (residual {tiny(worst_residual)})",
     )
 
-    # the room to spare: e^(-eps M^2) takes 2 eps of attraction from every pair
-    j0 = 0.2
-    inside = coins_off_circle(coins_partition_poly(8, lambda i, j: j0 - 2 * 0.09))
-    outside = coins_off_circle(coins_partition_poly(8, lambda i, j: j0 - 2 * 0.11))
+    # e^(-eps M^2) on the magnetisation is the same as taking 2 eps of attraction from every pair,
+    # because M^2 = n + 2 * (sum of the pairwise products)
+    j0, n = 0.2, 8
+    base = coins_partition_poly(n, lambda i, j: j0)
+    same = max(coins_not_proportional(coins_weighted(base, e), coins_partition_poly(n, lambda i, j: j0 - 2 * e)) for e in (0.09, 0.11))
+    not_same = coins_not_proportional(coins_weighted(base, 0.09), coins_partition_poly(n, lambda i, j: j0 - 0.09))  # control: one eps per pair, not two
+    inside, res1 = coins_off_circle(coins_weighted(base, 0.09))
+    outside, res2 = coins_off_circle(coins_weighted(base, 0.11))
+    # the theorem is a guarantee, not a limit: weaken one pair to 0.05, so that the guarantee ends at eps = 0.025
+    weak = coins_partition_poly(n, lambda i, j: 0.05 if (i, j) == (0, 1) else j0)
+    still, res3 = coins_off_circle(coins_weighted(weak, 0.08))
+    gone, res4 = coins_off_circle(coins_weighted(weak, 0.09))
     spread = coins_partition_poly(6, lambda i, j: 0.0)
     binomial = [math.comb(6, k) for k in range(7)]
     check(
         "B3",
-        inside < 1e-8 and outside > 0.01 and max(abs(a - b) for a, b in zip(spread, binomial)) < 1e-12,
-        f"weighting a magnet's magnetisation M by e^(-eps M^2) takes 2 eps of attraction from every pair. Eight spins, every pair attracting by 0.2: "
-        f"at eps = 0.09 the zeros are still on the circle ({inside:.0e}), at eps = 0.11 they are off it ({outside:.3f}). "
-        "Six spins with no coupling give (1 + z)^6, all six zeros at one point: independence is the edge itself",
+        same < 1e-10 and not_same > 0.01 and inside < 1e-8 and outside > 0.01 and still < 1e-8 and gone > 0.01 and max(res1, res2, res3, res4) < 1e-9
+        and max(abs(a - b) for a, b in zip(spread, binomial)) < 1e-12,
+        f"weighting a magnet's magnetisation M by e^(-eps M^2) takes 2 eps of attraction from every pair: for eight spins with every pair attracting by 0.2, "
+        f"the weighted polynomial is the polynomial of the magnet with couplings 0.2 - 2 eps, up to a constant factor (to {tiny(same)} at eps = 0.09 and 0.11; "
+        f"control, with 0.2 - eps instead, the ratio of coefficients varies by a factor of {1 + not_same:.1f}). Its zeros are on the circle at eps = 0.09 ({tiny(inside)}) and off it at eps = 0.11 ({outside:.3f}): "
+        f"with equal couplings the zeros leave exactly when the attraction runs out. That is not so in general, because the theorem is a guarantee and not a limit: "
+        f"with one pair weakened to 0.05 the guarantee ends at eps = 0.025, yet the zeros are still on the circle at eps = 0.08 ({tiny(still)}), where that pair repels by 0.11, "
+        f"and leave only by eps = 0.09 ({gone:.3f}). Six spins with no coupling give (1 + z)^6, all six zeros at one point: independence is the edge itself",
     )
 
 
@@ -443,7 +507,7 @@ flow_LISTED = [14.1347, 21.0220, 25.0109, 30.4249, 32.9351, 37.5862, 40.9187, 43
 flow_TOP = 78.3  # a height between the 20th zero (77.14) and the 21st (79.34)
 flow_HIGH = 113.0  # a height between the 35th zero (111.87) and the 36th (114.32)
 flow_FAR = 417.0  # a height between the 213th zero (415.46) and the 214th (418.39)
-flow_NAMES = ("C1a", "C1b", "C1c", "C1d", "C2a", "C2b", "C3a", "C3b", "C4a", "C4b", "C5", "C6a", "C6b", "C7a", "C7b")
+flow_NAMES = ("C1a", "C1b", "C1c", "C1d", "C2a", "C2b", "C3a", "C3b", "C4a", "C4b", "C5", "C6a", "C6b", "C7a", "C7b", "C7c")
 
 
 class flow_Engine:
@@ -735,6 +799,12 @@ def flow_gap_variance(zeros: list[float]) -> float:
     return sum((v - mean) ** 2 for v in g) / len(g)
 
 
+def flow_gap_mean(zeros: list[float]) -> float:
+    """The mean of the same scaled gaps: about 1 if the scaling is right."""
+    g = [(b - a) * math.log(0.5 * (a + b) / (2 * PI)) / (2 * PI) for a, b in zip(zeros, zeros[1:])]
+    return sum(g) / len(g)
+
+
 def flow_closest(zeros: list[float]) -> tuple[float, int]:
     """The smallest neighbouring gap and the index of its lower zero."""
     return min((b - a, i) for i, (a, b) in enumerate(zip(zeros, zeros[1:])))
@@ -786,7 +856,8 @@ def flow_run() -> None:
         f"the Fourier integral of Phi, summed in 256-bit integers, is xi(1/2 + ix): at x = 0, 10, ..., 110, where |xi| falls from 0.50 to {abs(eng.val(0.0, 110.0)):.1e}, "
         f"the largest relative gap from xi computed from gamma and zeta is {worst:.0e}, and at five points off the real axis {worst_c:.0e}. Doubling the sample points "
         f"and adding 64 bits moves H and its first three x-derivatives, at tau = -0.32, 0, 0.5, by at most {float(moved['low']):.0e} of themselves up to x = {top} and "
-        f"{float(moved['high']):.0e} at x = 110. Controls at x = 80, where xi is {true80:.1e}: the same integral in ordinary floating point returns {plain:.0e}, "
+        f"{float(moved['high']):.0e} at x = 110 (that last test is the engine against a finer copy of itself; what checks the derivatives from outside is the motion "
+        f"of the zeros in C2a). Controls at x = 80, where xi is {true80:.1e}: the same integral in ordinary floating point returns {plain:.0e}, "
         f"which is rounding noise, and the integers with a three times coarser step miss by {coarse_off:.0e} times the value",
     )
 
@@ -862,11 +933,14 @@ def flow_run() -> None:
 
     var = {tau: flow_gap_variance(forward[tau][:20]) for tau in forward}
     least = {tau: flow_closest(forward[tau][:20])[0] for tau in forward}
+    mean_gap = {tau: flow_gap_mean(forward[tau][:20]) for tau in forward}
     check(
         "C2b",
-        var[0.0] > 1.2 * var[0.125] > 1.2 * 1.2 * var[0.5] and least[0.0] < least[0.125] < least[0.5] and var[-0.2] > 1.2 * var[0.0] and least[-0.2] < least[0.0],
+        var[0.0] > 1.2 * var[0.125] > 1.2 * 1.2 * var[0.5] and least[0.0] < least[0.125] < least[0.5] and var[-0.2] > 1.2 * var[0.0] and least[-0.2] < least[0.0]
+        and all(abs(mean_gap[tau] - 1) < 0.05 for tau in (-0.2, 0.0, 0.125, 0.5)),
         f"forward the zeros spread out: among the first 20, at tau = 0, 0.125, 0.5, the smallest gap grows, {least[0.0]:.3f}, {least[0.125]:.3f}, {least[0.5]:.3f}, and the "
-        f"variance of the 19 gaps, each scaled by the local density of zeros, falls: {var[0.0]:.4f}, {var[0.125]:.4f}, {var[0.5]:.4f}. Control: backward, at tau = -0.2, "
+        f"variance of the 19 gaps, each scaled by the local density of zeros, falls: {var[0.0]:.4f}, {var[0.125]:.4f}, {var[0.5]:.4f} (the scaled gaps average "
+        f"{mean_gap[0.0]:.3f}, {mean_gap[0.125]:.3f}, {mean_gap[0.5]:.3f}, so the scaling is right). Control: backward, at tau = -0.2, "
         f"the smallest gap is {least[-0.2]:.3f} and the variance {var[-0.2]:.4f}",
     )
 
@@ -894,6 +968,7 @@ def flow_run() -> None:
     check(
         "C3a",
         n_scan == [20] * 16 + [18, 16] and i_1 == 18 and step_1 < 1e-12 and touch < 1e-10 and all(a > b for a, b in zip(closing, closing[1:]))
+        # the collision time and place are regression values; what confirms them from outside is the count either side and the second route
         and abs(tau_c + 0.318886) < 2e-6 and abs(x_c - 77.02664) < 2e-5 and around[0] == [20, 18] and route[0] and not route_off,
         f"backward in steps of 0.02 all 20 zeros below {top} stay real down to tau = {tau_steps[last_full]:.2f}, zeros 19 and 20 closing at every step from "
         f"{closing[0]:.4f} to {closing[-1]:.4f} apart; at -0.32 there are {n_scan[16]} real zeros, at -0.34 {n_scan[17]}. The first collision: zeros 19 and 20 "
@@ -904,6 +979,7 @@ def flow_run() -> None:
     )
     check(
         "C3b",
+        # regression values, confirmed from outside by the counts either side and the second route
         (i_2, i_3) == (12, 8) and max(step_2, step_3) < 1e-12 and abs(tau_2 + 0.321317) < 2e-6 and abs(x_2 - 60.49072) < 2e-5
         and abs(tau_3 + 0.469477) < 2e-6 and abs(x_3 - 49.66423) < 2e-5 and around[1:] == [[18, 16], [16, 14]] and route[1] and route[2],
         f"the next two collisions among the first twenty: zeros 13 and 14 ({zeros0[12]:.4f}, {zeros0[13]:.4f}) meet at x = {x_2:.4f} when tau = {tau_2:.6f}, "
@@ -963,6 +1039,7 @@ def flow_run() -> None:
         say(f"     {row[0]:.4f}: {row[1]:.5f}  {row[2]:.5f}  {row[3]:.7f}")
     check(
         "C5",
+        # 6.5040: regression value, with no second route (it only illustrates that the law is local)
         all(abs(r[1] - 8) < 6 * r[0] and abs(r[2] - 8) < 6 * r[0] and r[1] < 8 < r[2] for r in rows) and abs(rows[1][3] - 8) < 1e-4 and abs(far - 6.5040) < 1e-3,
         f"near the collision the squared gap is 8 (tau - tau_c): at tau - tau_c = 0.0005, 0.001, 0.002, 0.004 the ratio gap^2 / (tau - tau_c) is "
         f"{', '.join(f'{r[1]:.4f}' for r in rows)}; past the collision, with the gap now 2bi, (2b)^2 / (tau_c - tau) is {', '.join(f'{r[2]:.4f}' for r in rows)}; "
@@ -979,6 +1056,7 @@ def flow_run() -> None:
     still = at_est[19] - at_est[18] if len(at_est) == 20 else math.nan
     check(
         "C6a",
+        # 23.00, 16.61, 20.06, 0.6766: regression values; they follow from the gaps at tau = 0 and the collision times checked in C3
         abs(late[0] - 23.00) < 0.05 and abs(late[1] - 16.61) < 0.05 and abs(late[2] - 20.06) < 0.05 and abs(still - 0.6766) < 1e-3 and est[0] > est[1] > est[2]
         and actual[0] > actual[1] > actual[2],
         f"the estimate -g^2/8, exact for a pair alone, is early for these. Zeros 19, 20 start g = {gaps0[0]:.5f} apart: estimate {est[0]:.5f}, actual {actual[0]:.5f}, "
@@ -994,11 +1072,12 @@ def flow_run() -> None:
     push_listed = 4 * gaps0[0] ** 2 * flow_neighbour_sum(low35, 18, flow_HIGH, False) if len(low35) == 35 else math.nan
     check(
         "C6b",
-        abs(rate - 5.2512) < 1e-3 and abs(8 - push - rate) < 0.01 and abs(8 - push_listed - rate) > 0.1,
-        f"why the estimate is early: the other zeros. At tau = 0 the squared gap g^2 of zeros 19, 20 changes at {rate:.4f} per unit tau, not at the 8 of a pair alone "
+        abs(rate - 5.2512) < 1e-3 and abs(8 - push - rate) < 0.002 and abs(8 - push_listed - rate) > 0.1,  # 5.2512: regression value
+        f"the direction of that error, explained at the start of the motion. At tau = 0 the squared gap g^2 of zeros 19, 20 changes at {rate:.4f} per unit tau, not at the 8 of a pair alone "
         f"(from dx/dtau = H''/H' at each zero), and the shortfall {8 - rate:.4f} is the push of the neighbours, 4 g^2 * sum of 1/((a - y)(b - y)) over the other zeros y, "
         f"which comes to {push:.4f} (33 zeros below {flow_HIGH:.0f}, their mirror images, a smooth density beyond). Control: without the part beyond {flow_HIGH:.0f} "
-        f"the sum gives {push_listed:.4f} and the match is lost",
+        f"the sum gives {push_listed:.4f} and the match is lost. This accounts for the rate at the start, not for the whole delay: the push changes as the zeros move "
+        f"(held at its starting value it would put the collision at {-gaps0[0] ** 2 / rate:.4f}, past the true {actual[0]:.4f})",
     )
 
     # ------------------------------------------------------------------ C7: higher up, sooner
@@ -1012,6 +1091,7 @@ def flow_run() -> None:
         found.append((a, b, t_hit, x_hit, step_hit, n_hit, flow_second_route(t_hit, x_hit, 1e-9)))
     check(
         "C7a",
+        # regression values, confirmed from outside by the counts either side and the second route
         abs(found[0][2] + 0.096140) < 2e-6 and abs(found[1][2] + 0.220269) < 2e-6 and abs(found[2][2] + 0.285967) < 2e-6 and all(f[4] < 1e-12 and f[6] for f in found)
         and [f[5] for f in found] == [[35, 33], [33, 31], [31, 29]] and found[0][2] > found[1][2] > found[2][2] > tau_c,
         f"which collision comes first depends on how high one looks, and higher is sooner. Of the 35 zeros below {flow_HIGH:.0f} the first to meet are "
@@ -1031,12 +1111,30 @@ def flow_run() -> None:
     route415 = [flow_second_route(t415 + shift, x415, 1e-9) for shift in (0.0, 1e-8)]
     check(
         "C7b",
+        # 415.0188, 415.4552: the 212th and 213th zeros of zeta (external, from memory); the time is a regression value, confirmed by the second route
         tall_gap < 1e-9 and abs(a415 - 415.0188) < 1e-3 and abs(b415 - 415.4552) < 1e-3 and abs(t415 + 0.024768) < 2e-6 and step415 < 1e-11
         and n415 == [213, 213] and near415 == [2, 0] and route415 == [True, False] and t415 > found[0][2],
         f"higher still, sooner still: of the 213 zeros below {flow_FAR:.0f} (640-bit integers, within {tall_gap:.0e} of xi from gamma and zeta at 300, 400, 415) the first "
         f"to meet are {a415:.4f} and {b415:.4f}, {b415 - a415:.4f} apart at tau = 0, at x = {x415:.4f} when tau = {t415:.6f}, t = {4 * t415:.6f}: {n415[0]} real zeros below "
         f"{flow_FAR:.0f} at tau = 0 and still {n415[1]} at tau = {t415 + 0.0002:.6f}; between 414 and {flow_FAR:.0f}, {near415[0]} then and {near415[1]} at tau = "
         f"{t415 - 0.0002:.6f}. The second route puts the time within 1e-9 of this; control: moved by 1e-8 it fails that test",
+    )
+
+    # ------------------------------------------------------------------ C7c: the windows above each end just above a pair
+    a169, b169 = flow_pair(tall, 0.0, 169.5)
+    t169, x169, step169 = flow_double_zero(tall, -1.1 * (b169 - a169) ** 2 / 8, 0.5 * (a169 + b169) + 0.1 * (b169 - a169))
+    n169 = [flow_count(eng, tau, 0.0, flow_HIGH) + flow_count(tall, tau, flow_HIGH, 170.5, 0.3) for tau in (0.0, t169 + 0.0002)]
+    near169 = [flow_count(tall, tau, 168.0, 170.5) for tau in (t169 + 0.0002, t169 - 0.0002)]
+    route169 = [flow_second_route(t169 + shift, x169, 1e-9) for shift in (0.0, 1e-8)]
+    check(
+        "C7c",
+        abs(a169 - 169.0945) < 1e-3 and abs(b169 - 169.9120) < 1e-3  # the 63rd and 64th zeros of zeta, from the tables (external, from memory)
+        and step169 < 1e-11 and n169 == [64, 64] and near169 == [2, 0] and route169 == [True, False] and found[0][2] < t169 < t415,
+        f"the three windows each end just above the pair that meets first in them, and between the windows other pairs take the lead. Zeros 63 and 64, at {a169:.4f} and "
+        f"{b169:.4f}, meet at x = {x169:.4f} when tau = {t169:.6f}, t = {4 * t169:.6f}: sooner than the pair near 111 (t = {4 * found[0][2]:.6f}) and later than the pair "
+        f"near 415 (t = {4 * t415:.6f}). All {n169[0]} zeros below 170.5 are real at tau = 0 and still {n169[1]} at tau = {t169 + 0.0002:.6f}; between 168 and 170.5 there are "
+        f"{near169[0]} then and {near169[1]} at tau = {t169 - 0.0002:.6f}. The second route puts the time within 1e-9 of this; control: moved by 1e-8 it fails that test. "
+        f"So the lower bound t = {4 * found[0][2]:.4f} is what a search gets if it stops between heights 112 and 169, and no further",
     )
 
 
@@ -1444,11 +1542,14 @@ def zeros_run() -> None:
     check(
         "D3",
         len(found) == round(n_top) and abs(n_top - round(n_top)) < 1e-6 and found_mid == round(n_mid) and abs(n_mid - round(n_mid)) < 1e-6
-        and len(pairs) > 0 and plain < round(n_top) and len(misses) == 1 and abs(misses[0][0] - 2.4757) < 1e-3,
+        and len(pairs) > 0 and plain < round(n_top) and len(misses) == 1 and abs(misses[0][0] - 2.4757) < 1e-3,  # 2.4757: regression value
+        # the two terms with 1e-6 test only that theta and arg zeta agree with each other: theta/pi + 1 + S is a whole number
+        # whatever the zeros are. What tests the zeros is the equality of whole numbers.
         f"zeros of Z with 0 < t <= {T:.0f}: {len(found)} found, {plain} as sign changes between neighbours on a grid of step {H} and {2 * len(pairs)} as {len(pairs)} close pairs "
         f"hiding between grid points, recovered from the dip of |Z| there. The count that needs no zeros, N(T) = theta(T)/pi + 1 + S(T) with S(T) = arg zeta(1/2 + iT)/pi "
-        f"followed along the segment from 2 + iT ({evals_top} values of zeta), is {theta(T) / PI + 1:.4f} + ({s_top:+.4f}) = {n_top:.6f}; "
-        f"at height {t_mid:.0f} the two counts are {found_mid} and {n_mid:.6f} (there S = {s_mid:+.4f}, so the smooth part alone would say one too many). "
+        f"followed along the segment from 2 + iT ({evals_top} values of zeta), is {theta(T) / PI + 1:.4f} + ({s_top:+.4f}) = {round(n_top)}, the same number "
+        f"(that sum is a whole number whatever the zeros are, so its decimals prove nothing; the match of the two whole numbers is the test); "
+        f"at height {t_mid:.0f} the two counts are {found_mid} and {round(n_mid)} (there S = {s_mid:+.4f}, so the smooth part alone would say one too many). "
         f"Control: the sign changes on the grid alone are {round(n_top) - plain} short of N(T). The only dip of |Z| on the grid that does not reach zero is at t = "
         + (f"{misses[0][0]:.4f}, where Z = {misses[0][1]:.4f}" if len(misses) == 1 else f"(found {len(misses)} of them)")
         + ". Both counts are floating-point computations: evidence, not a proof",
@@ -1464,11 +1565,12 @@ def zeros_run() -> None:
     s_high = max(k - zeros_theta(g) / PI for k, g in enumerate(found))  # S just above each zero
     check(
         "D4",
-        abs(mean_s) < 0.1 and abs(mean_s_cut + 2) < 0.1,
-        f"Turing's test that no zero was missed: the average over {T - window:.0f} <= t <= {T:.0f} of [zeros found up to t] - theta(t)/pi - 1 is {mean_s:+.4f}. "
-        f"Zeros can only be missed in pairs, and a pair missed below {T - window:.0f} would make it {mean_s - 2:+.4f}; the bound of Turing and Lehman on the integral of S, "
-        f"1.91 + 0.114 ln(T/2pi), allows only +-{quoted:.3f} (quoted from the literature, not rederived here). Control: with the closest pair of zeros struck from the list "
-        f"the average is {mean_s_cut:+.4f}. Over the whole range S stays between {s_low:+.2f} and {s_high:+.2f}. "
+        abs(mean_s) < quoted and abs(mean_s_cut + 2) < quoted,  # 1.91 and 0.114: Lehman's constants for Turing's bound (external)
+        f"Turing's test that no zero was missed: the average over {T - window:.0f} <= t <= {T:.0f} of [zeros found up to t] - theta(t)/pi - 1 is {mean_s:+.4f}, "
+        f"inside the +-{quoted:.3f} that the bound of Turing and Lehman on the integral of S, 1.91 + 0.114 ln(T/2pi), allows (quoted from the literature, not rederived here). "
+        f"Zeros can only be missed in pairs, and a pair missed below {T - window:.0f} lowers every later count by two: with the closest pair of zeros struck from the list "
+        f"the average is {mean_s_cut:+.4f}, far outside the bound. That is arithmetic, and it is the whole of Turing's argument. "
+        f"Over the whole range S stays between {s_low:+.2f} and {s_high:+.2f}. "
         "This is evidence, not a rigorous verification: the values of Z are floating-point numbers without certified error bounds",
     )
 
@@ -1476,6 +1578,7 @@ def zeros_run() -> None:
     reach = 2e-9
     bracketed = sum(1 for g in found if (z(g - reach) > 0) != (z(g + reach) > 0))
     shifted = sum(1 for g in found[::50] if (z(g + 2 * reach) > 0) != (z(g + 4 * reach) > 0))
+    # external values: these five zeros as tabulated (Odlyzko's tables of zeros), typed in from memory, not read from a file
     published = {1: 14.134725141734694, 10: 49.773832477672302, 100: 236.524229665816206, 1000: 1419.422480945995686, 10000: 9877.782654005501143}
     worst_pub = max(abs(found[i - 1] - g) for i, g in published.items())
     next_door = min(abs(found[i - 1 + shift] - g) for i, g in published.items() for shift in (-1, 1) if i - 1 + shift >= 0)
@@ -1490,7 +1593,7 @@ def zeros_run() -> None:
         bracketed == len(found) and shifted == 0 and worst_pub < 1e-9 and next_door > 0.1 and at_zero < 1e-8 and between > 1e-3,
         f"each of the {len(found)} values is a zero to within {reach:.0e}: Z has opposite signs {reach:.0e} below and above {bracketed} of them (control: between {2 * reach:.0e} and {4 * reach:.0e} "
         f"above every 50th value it changes sign {shifted} times). The 1st, 10th, 100th, 1000th and 10000th ({found[0]:.9f}, {found[9]:.9f}, {found[99]:.9f}, {found[999]:.9f}, {found[9999]:.9f}) "
-        f"agree with the published tables to {worst_pub:.0e}, and the nearest other entry of the list is {next_door:.2f} away, so the numbering is right too. "
+        f"agree with their tabulated values (typed in from memory) to {worst_pub:.0e}, and the nearest other entry of the list is {next_door:.2f} away, so the numbering is right too. "
         f"Zeta itself, summed directly at {2 * len(sample)} of them (those five and their upper neighbours, the last two, the two closest pairs), is at most {at_zero:.0e} in size; "
         f"control: halfway between the same neighbours |zeta| is at least {between:.4f}",
     )
@@ -1563,12 +1666,13 @@ def zeros_run() -> None:
     worst = max(abs(e) / (2 * (i + 1) * H) ** 0.25 for i, e in enumerate(leftover)) / size
     check(
         "D8",
-        abs(euler - 0.5772156649) < 1e-10 and abs(mean_left - PI) < 0.05 and worst < 6,
+        abs(euler - 0.5772156649) < 1e-10 and abs(mean_left - PI) < 0.05 and worst < 6
+        and all(abs(e / m) < 0.02 for m, e in zip(marks, at_marks) if m >= 1000),
         "on the line the mean square does not settle: (1/T) times the integral of |zeta(1/2 + it)|^2 over 0 < t < T, from Z^2 sampled every 0.1, against ln(T/2pi) + 2 gamma - 1 (gamma = "
         f"{euler:.6f}, recomputed from the harmonic sum): " + "; ".join(f"T = {m:.0f}: {e / m + p:.4f} against {p:.4f}" for m, e, p in zip(marks, at_marks, predicted))
         + f". What is left over, E(T) = integral - T (ln(T/2pi) + 2 gamma - 1), swings between {min(leftover):+.0f} and {max(leftover):+.0f}: its typical size is {size:.1f} T^(1/4) "
         f"and it is never more than {worst:.1f} times that. Its average over 0 < T < {T:.0f} is {mean_left:+.3f}: the literature gives it the mean value pi = {PI:.3f}. "
-        f"Control: with ln T in place of ln(T/2pi) the leftover would average {mean_left - math.log(2 * PI) * (T + 2 * H) / 2:+.0f}",
+        f"(With ln T in place of ln(T/2pi) it would average {mean_left - math.log(2 * PI) * (T + 2 * H) / 2:+.0f}, by arithmetic: the 2 pi is not optional)",
     )
 
     # ---- D9, D10: to the right of the line the mean square settles
@@ -1591,7 +1695,16 @@ def zeros_run() -> None:
             heights.append(t)
             over_34.append(run_34 - zeta_32 * t)
             over_1.append(run_1 - zeta_2 * t)
-    const_34, root_34 = zeros_fit_line([math.sqrt(t) for t in heights], over_34)
+    def fits(scale, values: list[float]) -> list[tuple[float, float]]:
+        """The straight-line fit (constant, slope) of values against scale(T), started at T = 10, 30 and 100."""
+        out = []
+        for start in (10.0, 30.0, 100.0):
+            keep = [i for i, t in enumerate(heights) if t >= start]
+            out.append(zeros_fit_line([scale(heights[i]) for i in keep], [values[i] for i in keep]))
+        return out
+
+    fits_34 = fits(math.sqrt, over_34)
+    const_34, root_34 = fits_34[0]
     second, third = 2 * math.sqrt(2 * PI) * zeta_half, -2 * PI * zeta_half  # (2pi)^(2s-1) zeta(2-2s)/(2-2s) at s = 3/4; the constant term
 
     def two_terms(sigma: float, big_t: float) -> tuple[float, float]:
@@ -1601,22 +1714,25 @@ def zeros_run() -> None:
     log_10000 = math.log(10000.0 / (2 * PI)) + 2 * euler - 1
     check(
         "D9",
-        worst_two < 1e-7 and abs(root_34 - second) < 0.05 and abs(const_34 - third) < 0.5 and abs(over_34[-1] - second * math.sqrt(t_two)) < 0.15 * abs(second) * math.sqrt(t_two)
+        worst_two < 1e-7 and all(abs(c1 - second) < 0.05 and abs(c0 - third) < 0.5 for c0, c1 in fits_34)
+        and abs(over_34[-1] - second * math.sqrt(t_two)) < 0.15 * abs(second) * math.sqrt(t_two)
         and abs(sum(merging[0]) - log_10000) < 0.01 and abs(sum(merging[1]) - log_10000) < 1e-4,
         f"to the right of the line the mean square settles, slowly. At sigma = 3/4 the integral of |zeta|^2 over 0 < t < {t_two:.0f} is {run_34:.1f}, a mean of {run_34 / t_two:.4f} against the limit "
-        f"zeta(3/2) = {zeta_32:.4f}. Integral minus zeta(3/2) T, fitted over 10 < T < {t_two:.0f} by c1 sqrt(T) + c0: c1 = {root_34:.3f}, c0 = {const_34:+.2f}. The second term "
+        f"zeta(3/2) = {zeta_32:.4f}. Integral minus zeta(3/2) T, fitted over 10 < T < {t_two:.0f} by c1 sqrt(T) + c0: c1 = {root_34:.3f}, c0 = {const_34:+.2f} "
+        f"(started at 30 or 100 instead: c1 = {fits_34[1][1]:.3f}, {fits_34[2][1]:.3f}; c0 = {fits_34[1][0]:+.2f}, {fits_34[2][0]:+.2f}: the last digits depend on the window). The second term "
         f"(2pi)^(1/2) zeta(1/2) T^(1/2)/(1/2) has c1 = {second:.3f}, and the literature adds a constant third term -2 pi zeta(1/2) = {third:+.2f}. At T = {t_two:.0f} the first term alone is "
         f"{-over_34[-1]:.1f} above the integral, the two terms together {over_34[-1] - second * math.sqrt(t_two):.1f} below it. As sigma falls to 1/2 the two terms blow up with opposite signs and their sum does not: "
         f"at sigma = 0.5001 and T = 10000 they are {merging[0][0]:+.1f} and {merging[0][1]:+.1f} per unit T, sum {sum(merging[0]):.4f}; at 0.500001 the sum is {sum(merging[1]):.5f}; the logarithm of D8 is {log_10000:.5f}",
     )
     pole = both(0.001)[1]
-    const_1, log_1 = zeros_fit_line([math.log(t) for t in heights], over_1)
+    fits_1 = fits(math.log, over_1)
+    const_1, log_1 = fits_1[0]
     check(
         "D10",
-        abs(pole * 1e-6 - 1) < 1e-3 and abs(run_1 / (t_two - 1) - zeta_2) < 0.02 * zeta_2 and abs(log_1 + PI) < 0.1 and abs(over_1[-1] + PI * math.log(t_two)) < PI * math.log(t_two) / 3,
+        abs(pole * 1e-6 - 1) < 1e-3 and abs(run_1 / (t_two - 1) - zeta_2) < 0.02 * zeta_2 and all(abs(c1 + PI) < 0.1 for _, c1 in fits_1) and abs(over_1[-1] + PI * math.log(t_two)) < PI * math.log(t_two) / 3,
         f"at sigma = 1 the integral of |zeta(1 + it)|^2 from 0 does not exist: near the pole the integrand is 1/t^2 ({pole:.4g} at t = 0.001). From t = 1 it is {run_1:.1f} over 1 < t < {t_two:.0f}, "
-        f"a mean of {run_1 / (t_two - 1):.4f} against zeta(2) = {zeta_2:.4f}. Integral minus zeta(2) T, fitted over 10 < T < {t_two:.0f} by c1 ln T + c0: c1 = {log_1:.3f}, c0 = {const_1:+.2f}; "
-        f"the literature's second term is -pi ln T. At T = {t_two:.0f}, zeta(2) T is {-over_1[-1]:.1f} above the integral and zeta(2) T - pi ln T only {-over_1[-1] - PI * math.log(t_two):.1f} above it. "
+        f"a mean of {run_1 / (t_two - 1):.4f} against zeta(2) = {zeta_2:.4f}. Integral minus zeta(2) T, fitted over 10 < T < {t_two:.0f} by c1 ln T + c0: c1 = {log_1:.3f}, c0 = {const_1:+.2f} "
+        f"(started at 30 or 100 instead: c1 = {fits_1[1][1]:.3f}, {fits_1[2][1]:.3f}); the literature's second term is -pi ln T = {-PI:.3f} ln T. At T = {t_two:.0f}, zeta(2) T is {-over_1[-1]:.1f} above the integral and zeta(2) T - pi ln T only {-over_1[-1] - PI * math.log(t_two):.1f} above it. "
         f"(On these two lines |zeta|^2 is summed with t/2 + 20 terms; relative difference from the full sum at most {worst_two:.0e})",
     )
 
@@ -1649,6 +1765,7 @@ def zeros_run() -> None:
     middle = sorted(found[i + 1] - found[i] for i in range(len(found) - 1))[len(found) // 2]
     check(
         "D12",
+        # 7005.0629: the lower zero of Lehmer's pair (external, from memory); 17143.7865: regression value
         0.03 < gaps[i_norm] < 0.05 and abs(pair_norm[0] - 7005.0629) < 1e-3 and abs(pair_abs[0] - 17143.7865) < 1e-3 and gap_abs < gap_norm
         and abs(tau_pushed / tau_abs - 1) < 0.01 and middle ** 2 / 8 > 100 * abs(tau_abs),
         f"the closest pairs among the {len(found)} zeros. In units of the local mean spacing: {pair_norm[0]:.4f} and {pair_norm[1]:.4f} (Lehmer's pair), {gap_norm:.5f} apart, {gaps[i_norm]:.4f} of a mean spacing. "
@@ -1725,7 +1842,17 @@ def mirror_sign_changes(f, a: float, b: float, step: float) -> list[float]:
 
 
 def mirror_box(lo: float, hi: float, bottom: float, top: float) -> list[complex]:
-    return [complex(lo, bottom), complex(hi, bottom), complex(hi, top), complex(lo, top)]
+    """The rectangle lo < Re s < hi, bottom < Im s < top, counter-clockwise, its long sides cut into
+    pieces at most one unit long so that the sampling of the boundary does not thin out with height."""
+    steps = max(1, int(math.ceil(top - bottom)))
+    up = [complex(hi, bottom + (top - bottom) * j / steps) for j in range(steps + 1)]
+    down = [complex(lo, top - (top - bottom) * j / steps) for j in range(steps + 1)]
+    return up + down
+
+
+def mirror_count(f, lo: float, hi: float, bottom: float, top: float) -> int:
+    """Zeros of f in the box, by winding number, 32 sample points to every unit of boundary to start with."""
+    return winding(f, mirror_box(lo, hi, bottom, top), pieces=32)
 
 
 def mirror_polya(x: complex, h: float = 0.01, u_max: float = 1.6) -> complex:
@@ -1765,53 +1892,64 @@ def section_mirror() -> None:
         gap_series < 1e-9 and worst < 1e-10 and wrong > 0.005 and spread < 1e-9 and on_line < 1e-12,
         f"Davenport and Heilbronn's function f(s) = 1 + k/2^s - k/3^s - 1/4^s + 0/5^s + 1/6^s + ..., coefficients repeating with period five, k = {kappa:.10f} "
         f"(the series at 3 + 2i is within {gap_series:.0e} of the continued function). It has zeta's kind of mirror: f(s) = X(s) f(1 - s) with "
-        f"X(s) = 5^(1/2 - s) 2 (2 pi)^(s - 1) Gamma(1 - s) cos(pi s/2), to {worst:.0e} at eight points, and |X| = 1 on the line Re s = 1/2 (to {max(on_line, 1e-16):.0e}). "
+        f"X(s) = 5^(1/2 - s) 2 (2 pi)^(s - 1) Gamma(1 - s) cos(pi s/2), to {worst:.0e} at eight points, and |X| = 1 on the line Re s = 1/2 (to {tiny(on_line)}). "
         f"Control: with k = 0.3 the mirror fails by at least {wrong:.3f}; solving the mirror equation for k at each of the eight points gives the same k to {spread:.0e}",
     )
 
     # E2: on the line f is real up to a phase, and most zeros are there
     imag = max(abs(mirror_zf(t).imag) for t in (0.0, 1.0, 5.0, 20.0, 85.0, 85.7))
-    line_zeros = mirror_sign_changes(lambda t: mirror_zf(t).real, 0.0, 100.0, 0.05)
+    line_zeros = mirror_sign_changes(lambda t: mirror_zf(t).real, 0.0, 116.0, 0.05)
+    line_below_100 = [t for t in line_zeros if t < 100]
+    finer = mirror_sign_changes(lambda t: mirror_zf(t).real, 0.0, 100.0, 0.02)
     zeta_line = mirror_sign_changes(mirror_z, 1.0, 100.0, 0.05)
+    smallest_gap = min(b - a for a, b in zip(line_below_100, line_below_100[1:]))
     check(
         "E2",
-        imag < 1e-11 and len(line_zeros) == 52 and len(zeta_line) == 29 and abs(line_zeros[0] - 5.094160) < 1e-5,
-        f"on the line, exp(i theta_f(t)) f(1/2 + it) is real (largest imaginary part {imag:.0e}), so its zeros there show as sign changes: {len(line_zeros)} of them "
-        f"for 0 < t < 100, the first at {line_zeros[0]:.6f}. Zeta has {len(zeta_line)} in the same range, counted the same way",
+        imag < 1e-11 and len(line_below_100) == len(finer) and smallest_gap > 0.2 and len(zeta_line) == 29
+        and abs(line_zeros[0] - 5.094160) < 1e-5,  # 29: the known count of zeta's zeros below 100 (external); 5.094160: regression value
+        f"on the line, exp(i theta_f(t)) f(1/2 + it) is real (largest imaginary part {imag:.0e}), so its zeros there show as sign changes: {len(line_below_100)} of them "
+        f"for 0 < t < 100, the first at {line_zeros[0]:.6f} (the same number on a grid of 0.05 and of 0.02; the closest two are {smallest_gap:.2f} apart). "
+        f"Zeta has {len(zeta_line)} in the same range, counted the same way",
     )
 
     # E3: and some zeros are not on the line
-    rho = mirror_newton(mirror_dh, 0.808517 + 85.699348j)
+    rho = mirror_newton(mirror_dh, 0.808517 + 85.699348j)  # starting values: Spira's list (external)
     mirror_image = 1 - rho.conjugate()
     size_rho, size_mirror = abs(mirror_dh(rho)), abs(mirror_dh(mirror_image))
     size_line = abs(mirror_dh(0.5 + 1j * rho.imag))
-    small = [rho + complex(-0.05, -0.05), rho + complex(0.05, -0.05), rho + complex(0.05, 0.05), rho + complex(-0.05, 0.05)]
-    small_m = [mirror_image + (v - rho) for v in small]
-    wind_rho, wind_mirror = winding(mirror_dh, small, pieces=32), winding(mirror_dh, small_m, pieces=32)
+    wind_rho = mirror_count(mirror_dh, rho.real - 0.05, rho.real + 0.05, rho.imag - 0.05, rho.imag + 0.05)
+    wind_mirror = mirror_count(mirror_dh, mirror_image.real - 0.05, mirror_image.real + 0.05, rho.imag - 0.05, rho.imag + 0.05)
     rho2 = mirror_newton(mirror_dh, 0.650830 + 114.163343j)
     size_rho2 = abs(mirror_dh(rho2))
-    wind_rho2 = winding(mirror_dh, [rho2 + (v - rho) for v in small], pieces=32)
+    wind_rho2 = mirror_count(mirror_dh, rho2.real - 0.05, rho2.real + 0.05, rho2.imag - 0.05, rho2.imag + 0.05)
     check(
         "E3",
         size_rho < 1e-12 and size_mirror < 1e-10 and size_line > 0.3 and wind_rho == 1 and wind_mirror == 1
-        and abs(rho - (0.8085171825 + 85.6993484854j)) < 1e-8 and size_rho2 < 1e-12 and wind_rho2 == 1 and abs(rho2 - (0.650830 + 114.163343j)) < 1e-5,
-        f"f has a zero at {rho.real:.10f} + {rho.imag:.10f}i, well off the line: |f| there is {size_rho:.0e}, against {size_line:.3f} on the line at the same height, "
+        and abs(rho - (0.808517 + 85.699348j)) < 2e-6 and size_rho2 < 1e-12 and wind_rho2 == 1 and abs(rho2 - (0.650830 + 114.163343j)) < 2e-6,
+        f"f has a zero at {rho.real:.10f} + {rho.imag:.10f}i, well off the line: |f| there is {tiny(size_rho)}, against {size_line:.3f} on the line at the same height, "
         f"and the argument of f winds once round a small square about it. The mirror sends it to a second zero at {mirror_image.real:.10f} + {mirror_image.imag:.10f}i "
-        f"(|f| = {size_mirror:.0e}, winding {wind_mirror}). The next such pair is at {rho2.real:.6f} + {rho2.imag:.6f}i and its image (|f| = {size_rho2:.0e}, winding {wind_rho2})",
+        f"(|f| = {size_mirror:.0e}, winding {wind_mirror}). Another such pair is at {rho2.real:.6f} + {rho2.imag:.6f}i and its image (|f| = {size_rho2:.0e}, winding {wind_rho2}). "
+        "Both agree with the values Spira published in 1994 to the six decimals he gave",
     )
 
-    # E4: count everything in a box, both ways, for f and for zeta
-    box = mirror_box(0.0, 1.0, 80.0, 90.0)
-    all_f = winding(mirror_dh, box, pieces=64)
-    all_zeta = winding(zeta, box, pieces=64)
-    line_f = [t for t in line_zeros if 80 < t < 90]
+    # E4: count everything in the strip, both ways, for f and for zeta
+    def on_line(a: float, b: float) -> int:
+        return sum(1 for t in line_zeros if a < t < b)
+
+    spans = [(0.5, 80.0), (80.0, 90.0), (90.0, 113.5), (113.5, 116.0)]
+    by_winding = [mirror_count(mirror_dh, 0.0, 1.0, a, b) for a, b in spans]
+    by_sign = [on_line(a, b) for a, b in spans]
+    wide = mirror_count(mirror_dh, -1.0, 2.0, 80.0, 90.0)
+    all_zeta = mirror_count(zeta, 0.0, 1.0, 80.0, 90.0)
     line_zeta = [t for t in zeta_line if 80 < t < 90]
-    wide = winding(mirror_dh, mirror_box(-1.0, 2.0, 80.0, 90.0), pieces=64)
     check(
         "E4",
-        all_f == 7 and len(line_f) == 5 and all_zeta == 4 and len(line_zeta) == 4 and wide == 7,
-        f"in the strip 0 < Re s < 1 between heights 80 and 90, f has {all_f} zeros by winding and only {len(line_f)} on the line by sign changes: the other "
-        f"{all_f - len(line_f)} are the pair of E3 (a wider box, -1 < Re s < 2, holds {wide} too). Control: zeta in the same box has {all_zeta} by winding and {len(line_zeta)} on the line. "
+        by_winding[0] == by_sign[0] and by_winding[1] == by_sign[1] + 2 and by_winding[2] == by_sign[2] and by_winding[3] == by_sign[3] + 2
+        and by_sign[3] == 0 and wide == by_winding[1] and all_zeta == 4 and len(line_zeta) == 4,
+        "every zero of f in the strip 0 < Re s < 1 up to height 116, counted by winding number and, on the line, by sign changes. "
+        + "; ".join(f"heights {a:g} to {b:g}: {w} in the strip, {c} on the line" for (a, b), w, c in zip(spans, by_winding, by_sign))
+        + f". So the pair near height 85.7 is the first off the line and the pair near 114.2 the second, and everything else below 116 is on it "
+        f"(a wider box, -1 < Re s < 2, between 80 and 90 holds {wide} too). Control: zeta between 80 and 90 has {all_zeta} by winding and {len(line_zeta)} on the line. "
         "The same count on the same box tells the two functions apart",
     )
 
@@ -1825,16 +1963,16 @@ def section_mirror() -> None:
     as_sum = max(abs(half * chi5[n % 5] + half.conjugate() * chi5[n % 5].conjugate() - coeffs[n % 5]) for n in range(5)) if True else 0.0
     check(
         "E5",
-        abs(not_mult + kappa * kappa + 1) < 1e-12 and char_mult < 1e-12 and as_sum < 1e-12,
+        abs(not_mult) > 0.5 and char_mult < 1e-12 and as_sum < 1e-12,
         f"what f lacks: its coefficients do not multiply. a(2) a(3) = {a[2] * a[3]:+.4f} but a(6) = {a[6]:+.0f}, so f is no product over primes. "
         f"It is a sum of two functions that are: f = c L(s, chi) + conj(c) L(s, conj chi) with chi the character mod 5 sending 2 to i and c = (1 - ik)/2 "
-        f"(coefficients agree to {max(as_sum, 1e-16):.0e}; chi itself multiplies exactly, worst gap {char_mult:.0e}). Two products added are not a product",
+        f"(coefficients agree to {tiny(as_sum)}; chi itself multiplies, worst gap {tiny(char_mult)}). Two products added are not a product",
     )
 
     # E6: one bump made even by hand has only real zeros (Polya)
     real_zeros = mirror_sign_changes(lambda x: mirror_polya(x).real, 0.5, 40.0, 0.05)
-    polya_box = [complex(0.5, -1.5), complex(40.0, -1.5), complex(40.0, 1.5), complex(0.5, 1.5)]
-    polya_all = winding(mirror_polya, polya_box, pieces=64)
+    polya_box = [complex(0.5 + 39.5 * j / 40, -1.5) for j in range(41)] + [complex(40.0 - 39.5 * j / 40, 1.5) for j in range(41)]
+    polya_all = winding(mirror_polya, polya_box, pieces=16)
     xi_zeros = mirror_sign_changes(lambda x: xi_from_phi(x), 0.5, 40.0, 0.05)
     check(
         "E6",
@@ -1854,7 +1992,7 @@ def section_mirror() -> None:
     check(
         "E7",
         on < 1e-12 and abs(cross - 6.29) < 0.01 and abs(far / predicted - 1) < 0.01 and 6.0 < cross2 < 6.6,
-        f"zeta's own mirror factor chi(s), in zeta(s) = chi(s) zeta(1 - s), has modulus one on the critical line (to {max(on, 1e-16):.0e} at four heights) "
+        f"zeta's own mirror factor chi(s), in zeta(s) = chi(s) zeta(1 - s), has modulus one on the critical line (to {tiny(on)} at four heights) "
         f"and also along a curve that crosses the strip near height 2 pi: at Re s = 0.3 it is at t = {cross:.4f}, at Re s = 0.9 at t = {cross2:.4f}. "
         f"Higher up the line is the only place: |chi(0.3 + 100i)| = {far:.4f}, which is (t/2pi)^(1/2 - 0.3) = {predicted:.4f}",
     )
@@ -1933,16 +2071,30 @@ def lattice_energy_table(counts: dict[tuple[int, int, int, int], int], weights: 
     return table
 
 
-def lattice_zero_temperatures(table: dict[int, int]) -> list[complex]:
-    """All complex K (one representative each) at which sum n_e exp(K e) vanishes."""
+def lattice_zero_temperatures(table: dict[int, int]) -> tuple[list[complex], int, float]:
+    """All complex K (one representative each) at which sum n_e exp(K e) vanishes, as
+    (the zeros away from x = -1, how many times x = -1 is a zero, the residual of the rest),
+    where x = exp(step K) is the variable the sum is a polynomial in. The zero at x = -1 is
+    divided out exactly first (the coefficients are whole numbers): it can be a multiple zero,
+    which the root finder is poor at."""
     lowest = min(table)
     step = 0
     for e in table:
         step = math.gcd(step, e - lowest)
-    coeffs = [0.0] * ((max(table) - lowest) // step + 1)
+    coeffs = [0] * ((max(table) - lowest) // step + 1)
     for e, n in table.items():
-        coeffs[(e - lowest) // step] = float(n)
-    return [cmath.log(x) / step for x in poly_roots(coeffs)]
+        coeffs[(e - lowest) // step] = n
+    trivial = 0
+    while sum(c * (-1) ** k for k, c in enumerate(coeffs)) == 0:  # divide by (x + 1), exactly
+        quotient = [0] * (len(coeffs) - 1)
+        carry = 0
+        for k in range(len(coeffs) - 1, 0, -1):
+            carry = coeffs[k] - carry
+            quotient[k - 1] = carry
+        coeffs = quotient
+        trivial += 1
+    roots = poly_roots([float(c) for c in coeffs])
+    return [cmath.log(x) / step for x in roots], trivial, poly_residual([float(c) for c in coeffs], roots)
 
 
 def lattice_at(table: dict[int, int], k: complex) -> complex:
@@ -2040,59 +2192,84 @@ def section_lattice() -> None:
     special = lattice_energy_table(counts, (1, 1, 1, 1))   # a row of + above, a row of + - + - below
     free = lattice_energy_table(counts, (1, 1, 0, 0))      # nothing above or below
     lopsided = lattice_energy_table(counts, (1, 2, 2, 2))  # the special one with every vertical bond twice as strong
-    zeros_special = lattice_zero_temperatures(special)
+    zeros_special, trivial_special, res_special = lattice_zero_temperatures(special)
     off_special = max(abs(abs(cmath.sinh(2 * k)) - 1) for k in zeros_special)
-    zeros_free = lattice_zero_temperatures(free)
+    zeros_free, trivial_free, res_free = lattice_zero_temperatures(free)
     radii_free = sorted(abs(cmath.sinh(2 * k)) for k in zeros_free)
-    trivial_free = [r for r in radii_free if r < 0.1]      # e^(2K) = -1, where cosh K vanishes
-    proper_free = [r for r in radii_free if r >= 0.1]
-    zeros_lop = lattice_zero_temperatures(lopsided)
+    zeros_lop, trivial_lop, res_lop = lattice_zero_temperatures(lopsided)
     radii_lop = sorted(abs(cmath.sinh(2 * k) * cmath.sinh(4 * k)) for k in zeros_lop)
-    proper_lop = [r for r in radii_lop if r >= 0.1]
-    residual = max(abs(lattice_at(lopsided, k)) / sum(n * abs(cmath.exp(k * e)) for e, n in lopsided.items()) for k in zeros_lop)
     formula_gap = 0.0
     for size in ((2, 6), (2, 4), (3, 4), (1, 4)):
         table = special if size == (2, 6) else lattice_energy_table(lattice_cylinder_counts(*size), (1, 1, 1, 1))
         for k in (0.2, 0.4407, 0.7, 0.3 + 0.4j):
             formula_gap = max(formula_gap, abs(lattice_at(table, k) / lattice_product(size[0], size[1], k) - 1))
-    distinct_free = sorted({round(r, 3) for r in proper_free})
-    distinct_lop = sorted({round(r, 3) for r in proper_lop})
+    # is the finite lattice its own mirror image?  Z(K*) (sinh 2K)^(MN) / Z(K) is 1 if it is
+    mirror_special, mirror_free = [], []
+    for k in (0.2, 0.3, 0.5, 0.7):
+        k_dual = -0.5 * math.log(math.tanh(k))
+        factor = math.sinh(2 * k) ** (rows_n * cols_n)
+        mirror_special.append((lattice_at(special, k_dual) * factor / lattice_at(special, k)).real)
+        mirror_free.append((lattice_at(free, k_dual) * factor / lattice_at(free, k)).real)
+    # with unequal bonds the duality swaps the two directions: (K, 2K) goes to (K* of 2K, K* of K), which is off the family
+    dual_ratio = (-0.5 * math.log(math.tanh(0.2))) / (-0.5 * math.log(math.tanh(0.4)))
+    distinct_free = sorted({round(r, 3) for r in radii_free})
+    distinct_lop = sorted({round(r, 3) for r in radii_lop})
     check(
         "F2",
-        len(zeros_special) == 12 and off_special < 1e-8
-        and len(proper_free) == 12 and min(abs(r - 1) for r in proper_free) > 0.02
-        and len(proper_lop) == 16 and min(abs(r - 1) for r in proper_lop) > 0.1
-        and residual < 1e-9 and formula_gap < 1e-11,
+        len(zeros_special) == 12 and trivial_special == 0 and off_special < 1e-8
+        and len(zeros_free) == 12 and trivial_free == 6 and min(abs(r - 1) for r in radii_free) > 0.02
+        and len(zeros_lop) == 16 and trivial_lop == 2 and min(abs(r - 1) for r in radii_lop) > 0.1
+        and max(res_special, res_free, res_lop) < 1e-9 and formula_gap < 1e-11
+        and max(abs(v - 1) for v in mirror_special) < 1e-10 and min(abs(v - 1) for v in mirror_free) > 0.05 and abs(dual_ratio - 2) > 0.1,
         f"the zeros of an Ising magnet's partition function in complex temperature (Fisher's zeros), for a 2 by 6 lattice wrapped round a cylinder, all 4096 configurations summed. "
-        f"With Brascamp and Kunz's boundary (a row of + above, a row of + - + - below) all {len(zeros_special)} zeros lie on the circle |sinh 2K| = 1, the fixed set of the duality "
-        f"(furthest from it: {max(off_special, 1e-16):.0e}). Controls. Same lattice, free above and below: at {len(proper_free)} zeros |sinh 2K| is "
+        f"With Brascamp and Kunz's boundary (a row of + above, a row of + - + - below) the finite lattice is exactly its own mirror image, "
+        f"Z(K*) (sinh 2K)^12 = Z(K) (the ratio is 1 to {tiny(max(abs(v - 1) for v in mirror_special))} at four temperatures), and all {len(zeros_special)} zeros lie on the circle "
+        f"|sinh 2K| = 1, the fixed set of the duality (furthest from it: {tiny(off_special)}). Two controls, in each of which the finite lattice has lost its exact mirror. "
+        f"Free above and below: the same ratio is " + ", ".join(f"{v:.2f}" for v in mirror_free) + f", not 1, and at {len(zeros_free)} zeros |sinh 2K| is "
         + ", ".join(f"{r:.3f}" for r in distinct_free)
-        + f", near the circle and not on it (the other {len(trivial_free)} are the zero of cosh K, counted {len(trivial_free)} times). Same special boundary, vertical bonds twice as strong, "
-        f"where the self-dual set is |sinh 2K sinh 4K| = 1: at {len(proper_lop)} of its {len(zeros_lop)} zeros that product is "
-        + ", ".join(f"{r:.3f}" for r in distinct_lop)
-        + f", and at the other {len(zeros_lop) - len(proper_lop)} it is 0. "
+        + f", near the circle and not on it (the other {trivial_free} are the zero of cosh K, {trivial_free} times over). Vertical bonds twice as strong: the duality sends "
+        f"couplings (0.2, 0.4) to a pair in the ratio {dual_ratio:.2f}, not 2, so it no longer maps this family to itself; where the two would be equal, on |sinh 2K sinh 4K| = 1, "
+        f"that product at {len(zeros_lop)} of the {len(zeros_lop) + trivial_lop} zeros is " + ", ".join(f"{r:.3f}" for r in distinct_lop)
+        + f", and at the other {trivial_lop} it is 0. Every value found is a zero (residual {tiny(max(res_special, res_free, res_lop))}). "
         f"Brascamp and Kunz's product formula, 2^(MN) times the product of 1 + z^2 - z (cos a_i + cos b_j) with z = sinh 2K, agrees with the sum over configurations on four sizes "
-        f"at four temperatures to {formula_gap:.0e}",
+        f"at four temperatures to {tiny(formula_gap)}",
     )
 
-    # F3: the zeros close on the real axis only as the lattice grows
-    gaps = []
-    for size in (4, 16, 64, 256, 1024):
-        # nearest zero to z = 1 from the product formula with M + 1 = N = size: 2 cos(angle) = cos(pi/N) + cos(pi/(M + 1))
-        angle = math.acos(0.5 * (math.cos(PI / size) + math.cos(PI / size)))
-        gaps.append((size, 2 * math.sin(angle / 2)))
+    # F3: the zeros close on the transition point only as the lattice grows
+    def nearest_zero(side: int) -> float:
+        """Distance from z = sinh 2K = 1 of the nearest zero of the product formula, lattice of side - 1 rows by side columns."""
+        best = PI
+        for i in range(1, side // 2 + 1):
+            for j in range(1, side):
+                c = 0.5 * (math.cos((2 * i - 1) * PI / side) + math.cos(j * PI / side))
+                best = min(best, math.acos(max(-1.0, min(1.0, c))))
+        return 2 * math.sin(best / 2)
+
+    gaps = [(side, nearest_zero(side)) for side in (4, 8, 16, 64, 256)]
+    # and the sum over configurations does vanish there, for the one size small enough to sum: 3 rows by 4 columns
+    table34 = lattice_energy_table(lattice_cylinder_counts(3, 4), (1, 1, 1, 1))
+    def relative_size(z: complex) -> float:
+        k = 0.5 * cmath.asinh(z)
+        return abs(lattice_at(table34, k)) / sum(n * abs(cmath.exp(k * e)) for e, n in table34.items())
+    at_zero = relative_size(cmath.exp(1j * PI / 4))
+    beside = relative_size(1.05 * cmath.exp(1j * PI / 4))
     real_min = min(lattice_at(special, 0.01 * q).real for q in range(1, 200))
     check(
         "F3",
-        all(abs(gap * size / PI - 1) < 0.03 for size, gap in gaps) and real_min > 0,
-        "at any finite size no zero is at a real temperature (the partition function is a sum of positive terms: least value on 0 < K < 2 for the 2 by 6 lattice "
-        f"{real_min:.1f}); the transition is where the circle of zeros closes on the real axis. By the product formula the zero nearest sinh 2K = 1, on lattices of "
-        "side " + ", ".join(str(size) for size, _ in gaps) + ", is " + ", ".join(f"{gap:.5f}" for _, gap in gaps) + " away: pi / side, never zero",
+        abs(gaps[0][1] - 2 * math.sin(PI / 8)) < 1e-12 and at_zero < 1e-12 and beside > 1e-4
+        and all(b[1] < a[1] for a, b in zip(gaps, gaps[1:])) and all(abs(gap * side / PI - 1) < (0.03 if side < 64 else 0.001) for side, gap in gaps),
+        "the transition is where the circle of zeros closes on the real axis, at sinh 2K = 1, and it closes only in the limit. With Brascamp and Kunz's boundary on a lattice of "
+        "N - 1 rows by N columns, the zero nearest sinh 2K = 1, found by going through the factors of their product, is at distance "
+        + ", ".join(f"{gap:.5f}" for _, gap in gaps) + " for N = " + ", ".join(str(side) for side, _ in gaps)
+        + f": close to pi/N and never zero. For N = 4 the sum over all 4096 configurations does vanish at that point (it is {tiny(at_zero)} of the size of its terms; "
+        f"control, 5% further from the origin, {beside:.1e}). On the real axis every term of the sum is positive, so nothing can vanish at a real temperature "
+        f"(least value of the 2 by 6 sum on 0 < K < 2: {real_min:.1f})",
     )
 
     # F4: percolation: one of two crossings always happens, and at one half the odds are even at every size
     rows = []
     ok = True
+    both_total = neither_total = 0
     for n in (1, 2, 3):
         primal, dual = lattice_edges(n)
         m = len(primal)
@@ -2107,14 +2284,16 @@ def section_lattice() -> None:
                 by_count[bin(mask).count("1")] += 1
         total = sum(by_count)
         symmetric = all(by_count[q] + by_count[m - q] == math.comb(m, q) for q in range(m + 1))
+        both_total, neither_total = both_total + both, neither_total + neither
         ok = ok and both == 0 and neither == 0 and 2 * total == 1 << m and symmetric
         rows.append(f"n = {n}: {m} bonds, {total} of {1 << m} configurations cross")
     check(
         "F4",
         ok,
-        "bond percolation on the rectangle of n + 1 by n points, each bond open or closed. In every configuration exactly one of two things happens: open bonds "
-        "join left to right, or the dual bonds across closed bonds join bottom to top (both: 0 configurations, neither: 0). That holds at any density. What is special "
-        "at one half is that the dual rectangle is the same rectangle turned, so the two have equal odds: exactly half the configurations cross. "
+        "bond percolation on the rectangle of n + 1 by n points, each bond open or closed, leaving out the bonds that lie in its left and right sides (they cannot help a "
+        "crossing from left to right). In every configuration exactly one of two things happens: open bonds join left to right, or the dual bonds across closed bonds join "
+        f"bottom to top (both: {both_total} configurations, neither: {neither_total}). That holds at any density, and at any density the dual rectangle is the same rectangle turned. "
+        "What is special at one half is that a bond is as likely closed as open, so the two events have equal odds: exactly half the configurations cross. "
         + "; ".join(rows) + ". With k of the m bonds open the crossing counts satisfy c(k) + c(m - k) = C(m, k), so P(p) + P(1 - p) = 1 exactly",
     )
 
@@ -2222,6 +2401,20 @@ def tipping_gain(sw2: float, sb2: float) -> float:
     return sw2 * tipping_gauss_mean(lambda z: (1 / math.cosh(r * z)) ** 4)
 
 
+def tipping_overlap(sw2: float, sb2: float, q: float, c: float) -> float:
+    """What one wide layer does to two inputs whose units have mean square q and correlation c:
+    the new mean product, sw2 E[tanh(u1) tanh(u2)] + sb2, by a double integral."""
+    r = math.sqrt(q)
+    rest = math.sqrt(max(0.0, 1 - c * c))
+    total = 0.0
+    for z1, w1 in zip(tipping_NODES, tipping_WEIGHTS):
+        inner = 0.0
+        for z2, w2 in zip(tipping_NODES, tipping_WEIGHTS):
+            inner += w2 * math.tanh(r * (c * z1 + rest * z2))
+        total += w1 * math.tanh(r * z1) * inner
+    return sw2 * total + sb2
+
+
 def tipping_network(sw2s: tuple, sb2: float, width: int, depth: int, seed: int, eps: float = 1e-5) -> dict:
     """Send two inputs a distance eps apart through one random network at each weight variance in
     sw2s (the same Gaussian draws, scaled), and return the squared distance after each layer."""
@@ -2286,11 +2479,11 @@ def section_tipping() -> None:
         ok and exact_ratio < 1e-9 and abs(total_over - q) < 1e-9 and abs(q - math.exp(m_over * (q - 1))) < 1e-12 and 100 < cut_ratio < 110
         and mirror_gap < 1e-9 and wrong_star > 0.05 and abs(m_over * math.exp(-m_over) - m_star * math.exp(-m_star)) < 1e-12,
         "off the edge a scale appears. With m further events on average, the chance of size s is the m = 1 law times e^(-s (m - 1 - ln m))/m, exactly "
-        f"(checked to {max(exact_ratio, 1e-16):.0e}). Below one: " + "; ".join(rows)
+        f"(checked to {tiny(exact_ratio)}). Below one: " + "; ".join(rows)
         + f", so ten times nearer the edge the cutoff is {cut_ratio:.0f} times further out. Above one, at m = {m_over}: the sizes of the avalanches that stop add up to only "
         f"{total_over:.6f}, which is the root q = {q:.6f} of q = e^(m (q - 1)); the missing {1 - q:.4f} is the chance of an avalanche that never stops. "
         f"There is a mirror here too: the avalanches that do stop at m = {m_over} have exactly the sizes of all avalanches at m* = m q = {m_star:.6f} "
-        f"(chance of each size the same to {max(mirror_gap, 1e-16):.0e}; with m* off by 0.02 the chance of size 100 is off by {wrong_star:.2f} of itself), "
+        f"(chance of each size the same to {tiny(mirror_gap)}; with m* off by 0.02 the chance of size 100 is off by {wrong_star:.2f} of itself), "
         "where m e^(-m) = m* e^(-m*), and the only m that is its own image is 1",
     )
 
@@ -2323,16 +2516,28 @@ def section_tipping() -> None:
     edge = bisect(lambda v: tipping_gain(v, sb2) - 1, 1.0, 3.0, tol=1e-7)
     settings = (1.0, edge, 3.0)
     gains = {s: tipping_gain(s, sb2) for s in settings}
+    # a second route to chi that does not use the formula: move the correlation of two inputs from 1 to 1 - d
+    # and see how far one layer lets it fall
+    d = 1e-3
+    direct = {}
+    for s in settings:
+        q = tipping_length(s, sb2)
+        direct[s] = (q - tipping_overlap(s, sb2, q, 1 - d)) / (q * d)
+    route_gap = max(abs(direct[s] / gains[s] - 1) for s in settings)
     no_bias = [tipping_gain(v, 0.0) for v in (0.5, 0.9)]
     depth_scale = {s: (1 / abs(math.log(gains[s])) if abs(gains[s] - 1) > 1e-4 else float("inf")) for s in settings}
     check(
         "G4",
-        abs(edge - 1.76) < 0.01 and gains[1.0] < 0.8 and gains[3.0] > 1.15 and abs(gains[edge] - 1) < 1e-5 and max(abs(no_bias[0] - 0.5), abs(no_bias[1] - 0.9)) < 1e-9,
+        abs(edge - 1.76) < 0.01  # 1.76: the value I remember from the literature for this bias (external, from memory)
+        and gains[1.0] < 0.8 and gains[3.0] > 1.15 and abs(gains[edge] - 1) < 1e-5 and route_gap < 0.01
+        and max(abs(no_bias[0] - 0.5), abs(no_bias[1] - 0.9)) < 1e-9,
         "a deep network with random weights, each layer h -> W tanh(h) + b, weights of variance v/width and biases of variance 0.05. In the limit of great width one layer "
         "multiplies the squared distance between two nearby inputs by chi = v E[tanh'(sqrt(q) z)^2], q the settled mean square of h: "
         f"chi = {gains[1.0]:.4f} at v = 1 (differences die out: order), {gains[3.0]:.4f} at v = 3 (they grow: chaos), and exactly 1 at v = {edge:.4f}, the edge. "
+        f"A second route that does not use that formula, lowering the correlation of two inputs from 1 to {1 - d} and integrating what one layer does to it, gives "
+        f"{direct[1.0]:.4f}, {direct[edge]:.4f}, {direct[3.0]:.4f} (within {route_gap:.1e} of the formula; the difference is the size of the step). "
         f"The number of layers over which a difference changes by a factor e is 1/|ln chi|: {depth_scale[1.0]:.1f} at v = 1, {depth_scale[3.0]:.1f} at v = 3, unbounded at the edge. "
-        f"Control: with no bias, q settles at 0 for v < 1 and chi is v itself ({no_bias[0]:.4f} at v = 0.5, {no_bias[1]:.4f} at v = 0.9)",
+        f"With no bias, q settles at 0 for v < 1 and chi is v itself ({no_bias[0]:.4f} at v = 0.5, {no_bias[1]:.4f} at v = 0.9)",
     )
 
     # G5: and real random networks of modest width do what the limit says
@@ -2428,7 +2633,13 @@ def section_series() -> None:
 
 
 def main() -> int:
-    wanted = {a.upper() for a in sys.argv[1:] if not a.startswith("-")}
+    known = "A B C D E F G H".split()
+    flags = [a for a in sys.argv[1:] if a.startswith("-")]
+    wanted = [a.upper() for a in sys.argv[1:] if not a.startswith("-")]
+    bad = [a for a in wanted if a not in known] + [f for f in flags if f != "-v"]
+    if bad:
+        print("not understood: " + " ".join(bad) + ". Sections are " + " ".join(known) + ", given as separate letters (edge.py C E); the only flag is -v.")
+        return 2
     for letter, title, fn in (
         ("A", TITLE_DENSITY, section_density),
         ("B", TITLE_COINS, section_coins),
@@ -2445,7 +2656,7 @@ def main() -> int:
         fn()
     failed = [name for ok, name, _ in RESULTS if not ok]
     print(f"{len(RESULTS)} checks, {len(failed)} failed" + (": " + ", ".join(failed) if failed else ""))
-    return 1 if failed else 0
+    return 1 if failed or not RESULTS else 0
 
 
 if __name__ == "__main__":
