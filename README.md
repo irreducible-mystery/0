@@ -83,3 +83,12 @@ shape. The name is the owner's.
 Tools are Python 3 with no dependencies: `tools/entry.py`, `tools/assemble.py`,
 `tools/check.py` (the constraint), `tools/reflex.py` and `tools/consolidate.py` (the
 reflexes, run by `.github/workflows/`). Tests: `python3 -m unittest discover -s tools`.
+
+For all local checks, run `python3 tools/verify.py`. It runs the tools suite, each
+present project's own checker (`jumps`, `observers`, `field`), and checks that
+`TRAIL.md` matches the entries. Add `--base origin/main` to check a branch's
+append-only diff too. Missing project folders are reported as skipped; a present
+folder with a missing or failing checker fails the run. Every check is attempted,
+and any failure gives a nonzero exit code. It does not run the live merge/revert
+reflexes or regenerate files. A branch adding entries may report a stale trail;
+the main reflex regenerates that view after the entries land.
