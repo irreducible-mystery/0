@@ -397,7 +397,7 @@ def section_density() -> None:
         ok and deepest > -errs[-1] / 3,
         f"simulated: Kuiper's statistic on {points} uniform points, {runs} times; the mean of sqrt(Y) cos(x log Y) against twice the transform of Phi, "
         "each within three sampling errors. " + "; ".join(rows) + ". The sample is consistent with a zero at the last height and cannot locate it: the exact transform "
-        f"is within one sampling error of 0 at every height above {drowned_from:.1f}, and beyond the zero it never falls below {deepest:.4f}",
+        f"is within one sampling error of 0 at every height from {math.ceil(drowned_from * 10) / 10:.1f} up to 25, the range scanned, and beyond the zero it never falls below {deepest:.4f} there",
     )
 
 
